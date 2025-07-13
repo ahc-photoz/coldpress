@@ -197,23 +197,27 @@ We welcome all contributions and greatly appreciate your help. To get started, p
 
 If you use `coldpress` in your research, please acknowledge **coldpress** in your publications and cite the research note where **coldpress** is described:
 
-> Hernán-Caballero, A. 2025, Res. Notes AAS, 9, 170.
-> DOI: 10.3847/2515-5172/adeca6
+> Hernán-Caballero, A. 2025, Res. Notes AAS, 9, 7, 170.
+> doi:10.3847/2515-5172/adeca6
 
 
 You can use the following BibTeX entry:
 
 ```bibtex
-@ARTICLE{<ColdPressRN>,
-   author = {{Hern\'an-Caballero, A.}},
-    title = "{ColdPress: Efficient Quantile-based Compression of Photometric Redshift PDFs}",
-  journal = {Research Notes of the AAS},
-     year = {2025},
-   volume = {9},
-      eid = {170},
-      doi = {10.3847/2515-5172/adeca6},
-   archivePrefix = {arXiv},
-   eprint = {},
+@ARTICLE{2025RNAAS...9..170H,
+       author = {{Hern{\'a}n-Caballero}, Antonio},
+        title = "{ColdPress: Efficient Quantile-based Compression of Photometric Redshift PDFs}",
+      journal = {Research Notes of the American Astronomical Society},
+     keywords = {Astronomy software, 1855},
+         year = 2025,
+        month = jul,
+       volume = {9},
+       number = {7},
+          eid = {170},
+        pages = {170},
+          doi = {10.3847/2515-5172/adeca6},
+       adsurl = {https://ui.adsabs.harvard.edu/abs/2025RNAAS...9..170H},
+      adsnote = {Provided by the SAO/NASA Astrophysics Data System}
 }
 ```
 

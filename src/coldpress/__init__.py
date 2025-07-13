@@ -17,8 +17,8 @@ Attributes:
 
 Citation:
     If you use ColdPress in your research, please cite:
-    Hernán-Caballero, A. 2025, Research Notes of the AAS, 9, 170.
-    DOI: 10.3847/2515-5172/adeca6
+    Hernán-Caballero, A. 2025, Research Notes of the AAS, 9, 7, 170.
+    DOI:10.3847/2515-5172/adeca6
 """
 
 __author__ = "Antonio Hernán Caballero"
