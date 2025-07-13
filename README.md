@@ -165,7 +165,7 @@ By default, both methods are shown. You can choose to display only one using `--
 You can also overplot any numerical quantity from the FITS table as a vertical line using the `--quantities` flag followed by the relevant column names.
 
 ```bash
-coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID --id 73979566133084645
+coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID --id 73979566133084907
 ```
 ![Example of PDF with quantities marked](examples/pdf_73979566133084907.png)
 
