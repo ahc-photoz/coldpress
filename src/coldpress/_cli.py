@@ -8,7 +8,7 @@ import numpy as np
 from astropy.io import fits
 
 from . import __version__
-from .encode import encode_from_binned, encode_from_samples
+from .encode import _batch_encode
 from .decode import decode_to_binned, decode_quantiles, quantiles_to_binned
 from .stats import measure_from_quantiles, ALL_QUANTITIES
 from .utils import step_pdf_from_quantiles, plot_from_quantiles
@@ -76,6 +76,7 @@ def encode_logic(args):
             - input (str): Path to the input FITS file.
             - output (str): Path for the output FITS file.
             - length (int): Packet length in bytes for the encoded PDF.
+            - density (str, optional): Name of the column with density PDFs.
             - binned (str, optional): Name of the column with binned PDFs.
             - samples (str, optional): Name of the column with PDF samples.
             - zmin (float, optional): Min redshift for binned PDFs.
@@ -94,24 +95,33 @@ def encode_logic(args):
 
     with fits.open(args.input) as h:
         header = h[1].header
-        if args.binned is None:
-            samples = h[1].data[args.samples]
+        if args.samples is not None:
+            orig_column = args.samples
+            data = {'format': 'samples', 'samples': h[1].data[args.samples]}
+            history = f'PDFs from samples in column {args.samples} cold-pressed as {args.out_encoded}'
             print(f"Generating quantiles from random redshift samples and compressing into {args.length}-byte packets...")
         else:
-            PDF = h[1].data[args.binned]
-            zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
-            cratio = PDF.shape[1]*PDF.itemsize/args.length
+            if args.binned is not None:
+                orig_column = args.binned
+                data = {'format': 'PDF_histogram'}
+                history = f'Binned PDFs in column {args.binned} cold-pressed as {args.out_encoded}'
+            else:
+                orig_column = args.density   
+                data = {'format': 'PDF_density'}
+                history = f'Probability density in column {args.density} cold-pressed as {args.out_encoded}'
+                 
+            data['PDF'] = h[1].data[orig_column]
+            data['zvector'] = np.linspace(args.zmin, args.zmax, data['PDF'].shape[1])    
+      
+            cratio = data['PDF'].shape[1]*data['PDF'].itemsize/args.length
             print(f"Compressing PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
 
         orig_cols = list(h[1].columns)
 
         start = time.process_time()
-        if args.binned is None:
-            coldpress_PDF = encode_from_samples(samples, packetsize=args.length, ini_quantiles=args.length-9,
-                                                   validate=args.validate, tolerance=args.tolerance)        
-        else:
-            coldpress_PDF = encode_from_binned(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-9,
-                                                   validate=args.validate, tolerance=args.tolerance)
+
+        coldpress_PDF = _batch_encode(data, packetsize=args.length, ini_quantiles=args.length-9, validate=args.validate, tolerance=args.tolerance) 
+                                                                                               
         end = time.process_time()
         cpu_seconds = end - start
         print(f"{coldpress_PDF.shape[0]} PDFs cold-pressed in {cpu_seconds:.6f} CPU seconds")
@@ -120,11 +130,6 @@ def encode_logic(args):
         new_col = fits.Column(name=args.out_encoded, format=f'{nints}J', array=coldpress_PDF)
 
         final_cols = [c for c in orig_cols if c.name != args.out_encoded]
-
-        if args.binned is None:
-            orig_column = args.samples
-        else:
-            orig_column = args.binned  
               
         if args.keep_orig:
             print(f"Including column '{orig_column}' in output FITS table.")
@@ -135,10 +140,7 @@ def encode_logic(args):
         final_cols.append(new_col)
         new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
 
-    if args.binned is None:
-        new_hdu.header.add_history(f'PDFs from samples in column {args.samples} cold-pressed as {args.out_encoded}')
-    else:       
-        new_hdu.header.add_history(f'Binned PDFs in column {args.binned} cold-pressed as {args.out_encoded}')
+    new_hdu.header.add_history(history)
     print(f"Writing compressed data to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
@@ -475,11 +477,12 @@ def main():
     parser_encode.add_argument('input', metavar='input.fits', type=str, help='Name of input FITS catalog.')
     parser_encode.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS catalog.')
     format_group = parser_encode.add_mutually_exclusive_group(required=True)
-    format_group.add_argument('--binned', type=str, help='Name of input column containing binned PDFs.')
-    format_group.add_argument('--samples', type=str, help='Name of input column containing a set of random samples from the PDFs.')
+    format_group.add_argument('--density', type=str, help='Name of input column containing probability densities sampled in a grid of redshifts.')
+    format_group.add_argument('--binned', type=str, help='Name of input column containing cumulative probabilities inside redshift bins.')
+    format_group.add_argument('--samples', type=str, help='Name of input column containing a set of random redshift samples from the underlying probability distribution.')
     parser_encode.add_argument('-o', '--out-encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of output column containing the cold-pressed PDFs.')
-    parser_encode.add_argument('--zmin', type=float, help='Redshift of the first bin (required with --binned).')
-    parser_encode.add_argument('--zmax', type=float, help='Redshift of the last bin (required with --binned).')
+    parser_encode.add_argument('--zmin', type=float, help='Lowest redshift in the grid (with --density) or bins (with --binned).')
+    parser_encode.add_argument('--zmax', type=float, help='Highest redshift in the grid (with --density) or bins (with --binned).')
     parser_encode.add_argument('--length', type=int, nargs='?', default=80, help='Length of cold-pressed PDFs in bytes (must be multiple of 4).')
     parser_encode.add_argument('--validate', action='store_true', default=False, help='Verify accuracy of recovered quantiles.')
     parser_encode.add_argument('--tolerance', type=float, nargs='?', default=0.001, help='Maximum shift tolerated for the redshift of the quantiles.')

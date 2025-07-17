@@ -72,6 +72,60 @@ def binned_to_quantiles(z_grid, Pz, Nquantiles=100):
     qs = np.interp(targets, cdf_edges, edges)
 
     return qs
+    
+import numpy as np
+
+def density_to_quantiles(zvector, pdf_density, Nquantiles=100):
+    """
+    Calculates quantile redshifts from a PDF sampled on a grid.
+
+    This function assumes the PDF is defined by its density values at specific
+    redshifts and that it can be modeled with linear interpolation between them.
+
+    Args:
+        zvector (np.ndarray): Array of redshift values where the PDF is sampled.
+        pdf_density (np.ndarray): Array of probability density values P(z) at each zvector point.
+        Nquantiles (int, optional): The number of quantiles to compute. 
+
+    Returns:
+        np.ndarray: An array of redshift values corresponding to the quantiles.
+    """
+    
+    # remove leading and trailing zeros in the probability density
+    nonzero_indices = np.where(pdf_density > 0)[0]
+    
+    first_idx = nonzero_indices[0]
+    last_idx = nonzero_indices[-1]
+    
+    # Define slice to include one adjacent zero on each side (if exists)
+    slice_start = max(0, first_idx - 1)
+    slice_end = min(len(pdf_density), last_idx + 2) 
+
+    z_trimmed = zvector[slice_start:slice_end]
+    pdf_trimmed = pdf_density[slice_start:slice_end]
+
+    
+    # 1. Normalize the PDF so that its integral is 1.
+    total_area = np.trapz(pdf_trimmed, z_trimmed)
+            
+    normalized_pdf = pdf_trimmed / total_area
+
+    # 2. Compute the Cumulative Distribution Function (CDF) 
+    # It calculates the area of each trapezoidal segment and finds the cumulative sum.
+    segment_areas = 0.5 * (normalized_pdf[1:] + normalized_pdf[:-1]) * np.diff(z_trimmed)
+    cdf = np.concatenate(([0], np.cumsum(segment_areas)))
+    
+    # Ensure the CDF ends at exactly 1.0 to correct for floating-point inaccuracies.
+    if cdf[-1] > 0:
+        cdf /= cdf[-1]
+
+    # 3. Define the target probabilities for the desired quantiles.
+    target_quantiles = np.linspace(0, 1, Nquantiles)
+
+    # 4. Interpolate the inverted CDF to find the redshift for each target quantile.
+    quantile_redshifts = np.interp(target_quantiles, cdf, z_trimmed)
+    
+    return quantile_redshifts    
 
 
 def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
@@ -211,6 +265,8 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
 
     if data['format'] == 'PDF_histogram':
         valid = np.sum(data['PDF'],axis=1) > 0
+    if data['format'] == 'PDF_density':
+        valid = np.sum(data['PDF'],axis=1) > 0
     if data['format'] == 'samples':
         valid = np.all(np.isfinite(data['samples']), axis=1)
 
@@ -225,6 +281,8 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
         while True:
             if data['format'] == 'PDF_histogram':    
                 quantiles = binned_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
+            if data['format'] == 'PDF_density':    
+                quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'samples':
                 quantiles = samples_to_quantiles(data['samples'][i],Nquantiles=Nquantiles)
 
@@ -271,6 +329,28 @@ def encode_from_binned(PDF, zvector, ini_quantiles=71, packetsize=80, tolerance=
         np.ndarray: A 2D array where each row is a compressed PDF packet.
     """
     data = {'format': 'PDF_histogram', 'zvector': zvector, 'PDF': PDF}    
+    return _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+
+def encode_from_density(PDF, zvector, ini_quantiles=71, packetsize=80, tolerance=None, validate=None):
+    """Encodes Probability densities sampled in a grid into compressed byte packets.
+
+    This is a high-level wrapper that takes PDFs and encodes them
+    by calling the internal `_batch_encode` function.
+
+    Args:
+        PDF (np.ndarray): A 2D array where each row is a PDF sampled in a grid.
+        zvector (np.ndarray): A 1D array of the redshift grid values.
+        ini_quantiles (int, optional): Initial number of quantiles to try.
+            Defaults to 71.
+        packetsize (int, optional): Target size of the output byte packet.
+            Defaults to 80.
+        tolerance (float, optional): Tolerance for validation.
+        validate (bool, optional): Whether to perform validation.
+
+    Returns:
+        np.ndarray: A 2D array where each row is a compressed PDF packet.
+    """
+    data = {'format': 'PDF_density', 'zvector': zvector, 'PDF': PDF}    
     return _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
 
 def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None, validate=None):
