@@ -85,6 +85,7 @@ def encode_logic(args):
             - validate (bool): Whether to validate the encoding accuracy.
             - tolerance (float): Tolerance for validation.
             - keep_orig (bool): Whether to keep the original PDF column.
+            - clip_fraction (float): Fraction of samples to be clipped out at the extremes of the redshift range.
     """
     import time
     if args.length % 4 != 0:
