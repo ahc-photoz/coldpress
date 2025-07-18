@@ -5,7 +5,9 @@
 ## [2.0.0] - 2025-07-18
 
 ### Changed
-- **BREAKING CHANGE:** The core encoding algorithm now compresses `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. PDFs encoded with previous versions are no longer compatible and must be re-encoded.
+- **BREAKING CHANGE:** The core encoding algorithm now compresses `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. The size and structure of the header of compressed PDF packets has also changed. PDFs encoded with previous versions are no longer compatible and must be re-encoded.
+- The decoding algorithm now detects and corrects the seesaw pattern caused by rounding of inter-quantile jumps to single digits in high probability density regions. A mechanism for
+preventing zero inter-quantile separation in unresolved PDFs is also implemented.
 - The definition of `Z_MODE` is now more robust, calculated as the center of the narrowest inter-quantile interval within the 68% Highest Posterior Density Credible Interval.
 
 ### Added

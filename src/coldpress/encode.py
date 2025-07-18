@@ -1,5 +1,7 @@
 import numpy as np
 import struct
+from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA
+
 
 def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0):
     """Calculates quantiles from a set of random samples of a PDF.
@@ -86,8 +88,6 @@ def binned_to_quantiles(z_grid, Pz, Nquantiles=100):
 
     return qs
     
-import numpy as np
-
 def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=10):
     """
     Calculates quantile redshifts from a PDF sampled on a grid.
@@ -184,44 +184,35 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
 
     from .decode import decode_quantiles # Local import to avoid circular dependency at module level
 
-   # print('just entered encoding function')
     Nq = len(quantiles)
     if Nq > packetsize-2:
          raise ValueError(f'Error: cannot fit {Nq} quantiles in an {packetsize}-bytes packet')
 
     logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
     
-    a_shift = 0.020202707 # allows to encode negative redshifts down to -0.02 as an integer
-    df = 4.0e-5 # resolution in log(1+z) for the redshift of the first quantile
-    eps_min = 1.0e-7 # minimum epsilon value that can be encoded
-    eps_beta = 0.03 # exponential term that determines the maximum epsilon of the encoding
-
     # encode the first quantile as uint16
-    xmin_int = int(np.floor((logq[0]+a_shift)/df))
+    xmin_int = int(np.floor((logq[0]+NEGATIVE_Z_OFFSET)/LOG_DZ))
 
     # recompute true log(1+z) of the encoded value
-    logq_min = xmin_int*df - a_shift
+    logq_min = xmin_int*LOG_DZ - NEGATIVE_Z_OFFSET
     
     # update logq with encoded value for first quantile
     logq[0] = logq_min
     
     # find optimal value for epsilon
-  #  gaps = np.sort(quantiles[1:]-quantiles[:-1]) 
     gaps = np.sort(logq[1:]-logq[:-1])
-    #print('gaps = ',gaps)
 
     max_big_gaps = ((packetsize-3)-(Nq-1)) // 2 # maximum number of big gaps that fit in packet for Nq quantiles
-    #print(f'I think I can fit {max_big_gaps} big gaps in payload for {len(quantiles)} quantiles')
     eps_min2 = gaps[-(max_big_gaps+1)]/254 # all but n=max_big_gaps gaps must fit in 1 byte (and value 255 is reserved)
     eps_min3 = gaps[-1]/(256**2 -1) # the largest gap must fit in a 3-byte big gap
     
-    eps_target = np.max([eps_min,eps_min2,eps_min3]) # target for epsilon
-    eps_byte = int(np.ceil(np.log(eps_target/eps_min)/eps_beta)) # byte encoding for epsilon
+    eps_target = np.max([EPSILON_MIN,eps_min2,eps_min3]) # target for epsilon
+    eps_byte = int(np.ceil(np.log(eps_target/EPSILON_MIN)/EPSILON_BETA)) # byte encoding for epsilon
     if eps_byte > 255:
         # epsilon is too large. We need to try with fewer quantiles to fit more big gaps
         raise ValueError(f'Error: epsilon={eps_target} is too large for 1 byte encoding.')
         
-    eps = eps_min*np.exp(eps_beta*eps_byte) # actual epsilon represented by the encoded value
+    eps = EPSILON_MIN*np.exp(EPSILON_BETA*eps_byte) # actual epsilon represented by the encoded value
 
     # build payload from the quantiles 1 to N-1
     payload = bytearray()
@@ -251,11 +242,6 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
         shift = quantiles[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
             raise ValueError('Error: shift in quantiles exceeds tolerance.')
-#     print("I am done with this PDF. Look at it")
-#     print('packet: ')
-#     print([int(x) for x in packet])
-#     import code
-#     code.interact(local=locals())
     
     return L, bytes(packet)
 

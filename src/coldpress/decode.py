@@ -1,6 +1,7 @@
 import numpy as np
 import struct
 import sys
+from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA
 
 def decode_quantiles(packet):
     """Decodes a byte packet back into an array of quantiles.
@@ -16,39 +17,66 @@ def decode_quantiles(packet):
         np.ndarray: A 1D array of float values representing the decoded
             quantile locations. 
     """ 
-    a_shift = 0.020202707 # allows to encode negative redshifts down to -0.02 as an integer
-    df = 4.0e-5 # resolution in log(1+z) for the redshift of the first quantile
-    eps_min = 1.0e-7 # minimum epsilon value that can be encoded
-    eps_beta = 0.03 # exponential term that determines the maximum epsilon of the encoding
-   
+    # reconstruct epsilon and zmin
     eps_byte = packet[0]
-    eps = eps_min*np.exp(eps_beta*eps_byte)
+    eps = EPSILON_MIN*np.exp(EPSILON_BETA*eps_byte)
 
     xmin_int = struct.unpack('<H', packet[1:3])[0]   
-    logq_min = xmin_int*df - a_shift
-
+    logq_min = xmin_int*LOG_DZ - NEGATIVE_Z_OFFSET
+   
+    # decode the quantized jumps between consecutive quantiles
     payload = packet[3:]
-    zs = [logq_min]
+    jumps = []
     i = 0
     length = len(payload)
     while i < length:
         b = payload[i]
         if (b == 0) and (max(payload[i:]) == 0): # end if just trailing zeros remain
             break
-        if b == 0: # prevent two quantiles from having exactly the same z by applying tiny offsets
-            zs.append(zs[-1] + 0.05*eps)
-            zs[-2] -= 0.05*eps
+        if b < 255:
+            d = b
             i += 1
         else:
-            if b < 255:
-                d = b
-                i += 1
+            d = struct.unpack('>H', payload[i+1:i+3])[0]
+            i += 3
+        jumps.append(d)
+        
+    # remove seesaw pattern due to small jump values at high P(z)
+    new_jumps = np.array(jumps).astype(float)
+    insaw = False
+    for i in range(1,len(jumps)-1):
+        if not insaw and (jumps[i] < 10) and (abs(jumps[i]-jumps[i-1]) == 1):
+            insaw = True
+            init_saw = i-1
+            level = jumps[init_saw]
+            continue
+        if insaw and ((jumps[i] > 10) or (abs(jumps[i]-level) > 1)):
+            insaw = False
+            end_saw = i
+            if end_saw - init_saw > 3:
+                new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
+    
+    # fix zero-valued jumps by adding a tiny offset that gets compensated in the next non-zero jump    
+    if np.min(new_jumps) <= 0:
+        cumulative_offset = 0.
+        for i in range(1,len(new_jumps)):
+            if new_jumps[i] == 0.:
+                new_jumps[i] += 0.05
+                cumulative_offset += 0.05
             else:
-                d = struct.unpack('>H', payload[i+1:i+3])[0]
-                i += 3
-            zs.append(zs[-1] + d * eps)
+                new_jumps[i] -= cumulative_offset
+                cumulative_offset = 0.    
 
-    # convert from log(1+z) to z
+    # check that probability is conserved
+    if abs(np.sum(jumps)-np.sum(new_jumps)) > 0.01:
+        print('Something went wrong while correcting decoded jump values!')
+        import code
+        code.interact(local=locals())      
+                
+    # convert jumps to quantile redshifts         
+    zs = np.empty(new_jumps.size + 1, dtype=float)
+    zs[0] = logq_min
+    zs[1:] = logq_min + np.cumsum(new_jumps) * eps
     return np.exp(np.array(zs))-1
 
 def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False):
