@@ -120,7 +120,7 @@ def encode_logic(args):
 
         start = time.process_time()
 
-        coldpress_PDF = _batch_encode(data, packetsize=args.length, ini_quantiles=args.length-9, validate=args.validate, tolerance=args.tolerance) 
+        coldpress_PDF = _batch_encode(data, packetsize=args.length, ini_quantiles=args.length-8, validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction) 
                                                                                                
         end = time.process_time()
         cpu_seconds = end - start
@@ -478,7 +478,7 @@ def main():
     parser_encode.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS catalog.')
     format_group = parser_encode.add_mutually_exclusive_group(required=True)
     format_group.add_argument('--density', type=str, help='Name of input column containing probability densities sampled in a grid of redshifts.')
-    format_group.add_argument('--binned', type=str, help='Name of input column containing cumulative probabilities inside redshift bins.')
+    format_group.add_argument('--binned', type=str, help='Name of input column containing probabilities inside redshift bins.')
     format_group.add_argument('--samples', type=str, help='Name of input column containing a set of random redshift samples from the underlying probability distribution.')
     parser_encode.add_argument('-o', '--out-encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of output column containing the cold-pressed PDFs.')
     parser_encode.add_argument('--zmin', type=float, help='Lowest redshift in the grid (with --density) or bins (with --binned).')
@@ -487,6 +487,7 @@ def main():
     parser_encode.add_argument('--validate', action='store_true', default=False, help='Verify accuracy of recovered quantiles.')
     parser_encode.add_argument('--tolerance', type=float, nargs='?', default=0.001, help='Maximum shift tolerated for the redshift of the quantiles.')
     parser_encode.add_argument('--keep-orig', action='store_true', help='Include the original input column with binned PDFs or samples in the output file.')
+    parser_encode.add_argument('--clip-fraction', type=float, nargs='?', default=0, help='Fraction of samples to clip out at the extremes of the redshift range.')
     parser_encode.set_defaults(func=encode_logic)
 
     # --- Parser for the "decode" command ---
@@ -548,6 +549,8 @@ def main():
             parser.error('--zmin and --zmax are required when encoding from binned PDFs (--binned)')
         if args.samples and (args.zmin is not None or args.zmax is not None):
             parser.error('--zmin and --zmax can only be used with binned PDFs (--binned), not random samples (--samples)')
+        if args.samples is None and args.clip_fraction != 0.:
+            parser.error('--clip-fraction can only be used with PDFs by random samples (--samples)')    
 
     if args.command == 'check' and args.list and args.idcol is None:
         parser.error('--idcol is required when listing sources with flagged issues (--list)')

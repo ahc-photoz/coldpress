@@ -70,8 +70,16 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
 
     # --- Perform all necessary calculations ---
     temp_results = {}
+    if 'Z_MIN_HPDCI68' in internal_calcs or 'Z_MAX_HPDCI68' in internal_calcs:
+        HPDCI68_zmin, HPDCI68_zmax = HPDCI_from_quantiles(quantiles, conf=0.68, zinside=None)
+        temp_results['Z_MIN_HPDCI68'] = HPDCI68_zmin
+        temp_results['Z_MAX_HPDCI68'] = HPDCI68_zmax
+    if 'Z_MIN_HPDCI95' in internal_calcs or 'Z_MAX_HPDCI95' in internal_calcs:
+        HPDCI95_zmin, HPDCI95_zmax = HPDCI_from_quantiles(quantiles, conf=0.95, zinside=None)
+        temp_results['Z_MIN_HPDCI95'] = HPDCI95_zmin
+        temp_results['Z_MAX_HPDCI95'] = HPDCI95_zmax
     if 'Z_MODE' in internal_calcs:
-        temp_results['Z_MODE'] = zmode_from_quantiles(quantiles, width=0.005)
+        temp_results['Z_MODE'] = zmode_from_quantiles(quantiles, hpdci68=(HPDCI68_zmin,HPDCI68_zmax))
     if 'Z_MEAN' in internal_calcs:
         temp_results['Z_MEAN'] = zmean_from_quantiles(quantiles)
     if 'Z_MEDIAN' in internal_calcs:
@@ -85,49 +93,67 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
     if 'ODDS_MEAN' in internal_calcs:
         temp_results['ODDS_MEAN'] = odds_from_quantiles(quantiles, temp_results['Z_MEAN'], odds_window=odds_window)
     if 'Z_MODE_ERR' in internal_calcs:
-        HPDCI68_mode_zmin, HPDCI68_mode_zmax = HPDCI_from_quantiles(quantiles, conf=0.68, zinside=temp_results['Z_MODE'])
-        temp_results['Z_MODE_ERR'] = 0.5 * (HPDCI68_mode_zmax - HPDCI68_mode_zmin)
-    if 'Z_MIN_HPDCI68' in internal_calcs or 'Z_MAX_HPDCI68' in internal_calcs:
-        HPDCI68_zmin, HPDCI68_zmax = HPDCI_from_quantiles(quantiles, conf=0.68, zinside=None)
-        temp_results['Z_MIN_HPDCI68'] = HPDCI68_zmin
-        temp_results['Z_MAX_HPDCI68'] = HPDCI68_zmax
-    if 'Z_MIN_HPDCI95' in internal_calcs or 'Z_MAX_HPDCI95' in internal_calcs:
-        HPDCI95_zmin, HPDCI95_zmax = HPDCI_from_quantiles(quantiles, conf=0.95, zinside=None)
-        temp_results['Z_MIN_HPDCI95'] = HPDCI95_zmin
-        temp_results['Z_MAX_HPDCI95'] = HPDCI95_zmax
+        temp_results['Z_MODE_ERR'] = 0.5 * (HPDCI68_zmax - HPDCI68_zmin)
 
     # Filter the results to return only the originally requested quantities
     final_results = {key: temp_results[key] for key in q_to_compute if key in temp_results}
     
     return final_results
 
-def zmode_from_quantiles(quantiles, width=0.005):
-    """Calculates the mode of the PDF from its quantiles.
+# def zmode_from_quantiles(quantiles, width=0.005):
+#     """Calculates the mode of the PDF from its quantiles.
+# 
+#     This approach finds the location of the highest probability density by
+#     identifying the narrowest interval for a given change in the cumulative
+#     probability. It inspects intervals centered on the quantiles to mitigate
+#     quantization effects.
+# 
+#     Args:
+#         quantiles (np.ndarray): A 1D array of monotonic quantile locations.
+#         width (float, optional): The half-width of the sliding window used
+#             to estimate local density. Defaults to 0.005.
+# 
+#     Returns:
+#         float: The estimated modal redshift (Z_MODE).
+#     """
+#     Nq = len(quantiles)
+#     knots = np.linspace(0,1.0,Nq)
+#     dkplus = np.interp(quantiles+width,quantiles,knots,left=0,right=1)-knots
+#     dkminus = knots-np.interp(quantiles-width,quantiles,knots,left=0,right=1)
+#     if max(dkplus) > max(dkminus):
+#         i = np.argmax(dkplus)
+#         return quantiles[i]+width/2.
+#     else:
+#         i = np.argmax(dkminus)
+#         return quantiles[i]-width/2.
 
-    This approach finds the location of the highest probability density by
-    identifying the narrowest interval for a given change in the cumulative
-    probability. It inspects intervals centered on the quantiles to mitigate
-    quantization effects.
-
-    Args:
-        quantiles (np.ndarray): A 1D array of monotonic quantile locations.
-        width (float, optional): The half-width of the sliding window used
-            to estimate local density. Defaults to 0.005.
-
-    Returns:
-        float: The estimated modal redshift (Z_MODE).
-    """
-    Nq = len(quantiles)
-    knots = np.linspace(0,1.0,Nq)
-    dkplus = np.interp(quantiles+width,quantiles,knots,left=0,right=1)-knots
-    dkminus = knots-np.interp(quantiles-width,quantiles,knots,left=0,right=1)
-    if max(dkplus) > max(dkminus):
-        i = np.argmax(dkplus)
-        return quantiles[i]+width/2.
-    else:
-        i = np.argmax(dkminus)
-        return quantiles[i]-width/2.
-
+# def zmode_from_quantiles(quantiles,width=0.005):
+#     diff = quantiles[3:]-quantiles[:-3]
+#     u = np.argmin(diff)
+#     diff2 = quantiles[u+1:u+4]-quantiles[u:u+3]
+#     v = np.argmin(diff2)
+#     return 0.5*(quantiles[u+v]+quantiles[u+v+1])
+   
+def zmode_from_quantiles(quantiles, hpdci68=None):
+    # Compute HPDCI68 if not provided
+    if hpdci68 is None:
+        hpdci68 = HPDCI_from_quantiles(quantiles, conf=0.68)
+    
+    # find quantiles inside HPDCI68
+    inside = np.where((quantiles >= hpdci68[0]) & (quantiles <= hpdci68[1]))[0]
+    if len(inside) == 0:
+        print('No quantiles inside HPDCI68??')
+        import code
+        code.interact(local=locals())
+    minq = np.max((np.min(inside)-1,0))
+    maxq = np.min((np.max(inside)+2,len(quantiles)))    
+    
+    qclipped = quantiles[minq:maxq] # remove quantiles intervals that do not overlap with HPDCI68
+        
+    diff = qclipped[1:] - qclipped[:-1]
+    u = np.argmin(diff)
+    return 0.5*(qclipped[u]+qclipped[u+1])
+   
 def zmedian_from_quantiles(quantiles):
     """Calculates the median redshift from the PDF's quantiles.
 

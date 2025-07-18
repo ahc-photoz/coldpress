@@ -1,7 +1,7 @@
 import numpy as np
 import struct
 
-def samples_to_quantiles(samples, Nquantiles=100):
+def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0):
     """Calculates quantiles from a set of random samples of a PDF.
 
     This function takes random draws from a probability distribution and
@@ -12,14 +12,27 @@ def samples_to_quantiles(samples, Nquantiles=100):
         samples (np.ndarray): A 1D array of random samples from the PDF.
         Nquantiles (int, optional): The number of quantiles to compute.
             Defaults to 100.
+        clip_fraction (float, optional): The fraction of outlier samples to be clipped
+        on both extremes of the distribution.
 
     Returns:
         np.ndarray: A 1D array of `Nquantiles` values representing the
             quantile locations.
     """
-    valid = np.isfinite(samples)
+    valid = np.isfinite(samples) & (samples > -0.02) & (samples < 20.)
+    if len(valid[valid]) < Nquantiles:
+        print('Error: too few samples for this many quantiles')
+        import code
+        code.interact(local=locals())
+        
     zsorted = np.sort(samples[valid])
     targets = np.linspace(0.0, 1.0, Nquantiles) # target probability for quantiles
+
+    if clip_fraction > 0: # clip the most extreme values from the distribution
+        nclip = int(np.floor(len(zsorted)*clip_fraction))
+        if nclip > 0:
+            zsorted = zsorted[nclip:-nclip]
+            
     return np.quantile(zsorted, targets, method='linear')
 
 
@@ -75,7 +88,7 @@ def binned_to_quantiles(z_grid, Pz, Nquantiles=100):
     
 import numpy as np
 
-def density_to_quantiles(zvector, pdf_density, Nquantiles=100):
+def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=10):
     """
     Calculates quantile redshifts from a PDF sampled on a grid.
 
@@ -86,6 +99,8 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100):
         zvector (np.ndarray): Array of redshift values where the PDF is sampled.
         pdf_density (np.ndarray): Array of probability density values P(z) at each zvector point.
         Nquantiles (int, optional): The number of quantiles to compute. 
+        upsample_factor (int, optional): Factor by which to up-sample the PDF grid
+                                         for more accurate CDF inversion. 
 
     Returns:
         np.ndarray: An array of redshift values corresponding to the quantiles.
@@ -104,15 +119,19 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100):
     z_trimmed = zvector[slice_start:slice_end]
     pdf_trimmed = pdf_density[slice_start:slice_end]
 
+    # upsample
+    num_points = (len(z_trimmed) - 1) * upsample_factor + 1
+    z_hires = np.linspace(z_trimmed[0], z_trimmed[-1], num_points)
+    pdf_hires = np.interp(z_hires, z_trimmed, pdf_trimmed)
     
     # 1. Normalize the PDF so that its integral is 1.
-    total_area = np.trapz(pdf_trimmed, z_trimmed)
+    total_area = np.trapz(pdf_hires, z_hires)
             
-    normalized_pdf = pdf_trimmed / total_area
+    normalized_pdf = pdf_hires / total_area
 
     # 2. Compute the Cumulative Distribution Function (CDF) 
     # It calculates the area of each trapezoidal segment and finds the cumulative sum.
-    segment_areas = 0.5 * (normalized_pdf[1:] + normalized_pdf[:-1]) * np.diff(z_trimmed)
+    segment_areas = 0.5 * (normalized_pdf[1:] + normalized_pdf[:-1]) * np.diff(z_hires)
     cdf = np.concatenate(([0], np.cumsum(segment_areas)))
     
     # Ensure the CDF ends at exactly 1.0 to correct for floating-point inaccuracies.
@@ -123,8 +142,8 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100):
     target_quantiles = np.linspace(0, 1, Nquantiles)
 
     # 4. Interpolate the inverted CDF to find the redshift for each target quantile.
-    quantile_redshifts = np.interp(target_quantiles, cdf, z_trimmed)
-    
+    quantile_redshifts = np.interp(target_quantiles, cdf, z_hires)
+
     return quantile_redshifts    
 
 
@@ -138,8 +157,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
 
     The packet structure is:
     - 1 byte: Epsilon scaling factor.
-    - 2 bytes: zmin (encoded as uint16).
-    - 2 bytes: zmax (encoded as uint16).
+    - 2 bytes: log(1+zmin) (encoded as uint16).
     - Remaining bytes: Payload of encoded gaps, padded with zeros.
 
     Args:
@@ -166,40 +184,49 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
 
     from .decode import decode_quantiles # Local import to avoid circular dependency at module level
 
+   # print('just entered encoding function')
     Nq = len(quantiles)
-    if Nq > packetsize-3:
-        raise ValueError(f'Error: cannot fit {Nq} quantiles in an {packetsize}-bytes packet')
+    if Nq > packetsize-2:
+         raise ValueError(f'Error: cannot fit {Nq} quantiles in an {packetsize}-bytes packet')
 
-    zmin, zmax = quantiles[0], quantiles[-1]
+    logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
+    
+    a_shift = 0.020202707 # allows to encode negative redshifts down to -0.02 as an integer
+    df = 4.0e-5 # resolution in log(1+z) for the redshift of the first quantile
+    eps_min = 1.0e-7 # minimum epsilon value that can be encoded
+    eps_beta = 0.03 # exponential term that determines the maximum epsilon of the encoding
 
-    # encode endpoints as uint16
-    xmin_int = int(np.floor((zmin+0.01) / 0.0002))
-    xmax_int = int(np.ceil((zmax+0.01) / 0.0002))
+    # encode the first quantile as uint16
+    xmin_int = int(np.floor((logq[0]+a_shift)/df))
 
-    # recompute true zmin/zmax & epsilon
-    zmin_rec = xmin_int * 0.0002 - 0.01
-    zmax_rec = xmax_int * 0.0002 - 0.01
+    # recompute true log(1+z) of the encoded value
+    logq_min = xmin_int*df - a_shift
+    
+    # update logq with encoded value for first quantile
+    logq[0] = logq_min
+    
+    # find optimal value for epsilon
+  #  gaps = np.sort(quantiles[1:]-quantiles[:-1]) 
+    gaps = np.sort(logq[1:]-logq[:-1])
+    #print('gaps = ',gaps)
 
-    max_big_gaps = (packetsize-(Nq+3)) // 2 
+    max_big_gaps = ((packetsize-3)-(Nq-1)) // 2 # maximum number of big gaps that fit in packet for Nq quantiles
+    #print(f'I think I can fit {max_big_gaps} big gaps in payload for {len(quantiles)} quantiles')
+    eps_min2 = gaps[-(max_big_gaps+1)]/254 # all but n=max_big_gaps gaps must fit in 1 byte (and value 255 is reserved)
+    eps_min3 = gaps[-1]/(256**2 -1) # the largest gap must fit in a 3-byte big gap
+    
+    eps_target = np.max([eps_min,eps_min2,eps_min3]) # target for epsilon
+    eps_byte = int(np.ceil(np.log(eps_target/eps_min)/eps_beta)) # byte encoding for epsilon
+    if eps_byte > 255:
+        # epsilon is too large. We need to try with fewer quantiles to fit more big gaps
+        raise ValueError(f'Error: epsilon={eps_target} is too large for 1 byte encoding.')
+        
+    eps = eps_min*np.exp(eps_beta*eps_byte) # actual epsilon represented by the encoded value
 
-    gaps = np.sort(quantiles[1:-1]-quantiles[:-2]) 
-    gapthreshold = gaps[-max_big_gaps-1] 
-    eps_min = 0.00001*np.ceil(100000*gapthreshold/254)
-
-    if eps_min > 0.00255:
-        raise ValueError('Error: minimum usable epsilon={eps_min} is too large. Increase packet length or decrease number of quantiles.')
-
-    eps_min2 = 0.00001*np.ceil(100000*gaps[-1]/(256**2 -1))
-
-    eps = np.max([0.00001,eps_min,eps_min2])    
-
-    if int(np.round(eps*100000)) > 255:
-        raise ValueError(f'Error: epsilon={eps} is too large for 1 byte encoding.')
-
-    # build payload from the *interior* N-2 quantiles
+    # build payload from the quantiles 1 to N-1
     payload = bytearray()
-    prev = zmin_rec
-    for z in quantiles[1:-1]:
+    prev = logq_min
+    for z in logq[1:]:
         d = int(round((z - prev) / eps))
         if 0 <= d <= 254:
             payload.append(d)
@@ -209,26 +236,30 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
         prev = prev + d * eps
 
     L = len(payload)
-    if L > packetsize-5: 
+    if L > packetsize-3: 
         raise ValueError(f'Error: payload of length {L} does not fit in packet of size {packetsize}.')
 
     packet = bytearray(packetsize)
-    packet[0] = int(np.round(eps*100000))
+    packet[0] = eps_byte
     packet[1:3] = struct.pack('<H', xmin_int)            
-    packet[3:5] = struct.pack('<H', xmax_int)
-    packet[5:5+L] = payload
+    packet[3:3+L] = payload
 
     if validate: 
         qrecovered = decode_quantiles(packet)
         if len(qrecovered) != len(quantiles):
             raise ValueError('Error: packet decodes to wrong number of quantiles.')
-        shift = quantiles[1:-1]-qrecovered[1:-1]
+        shift = quantiles[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
             raise ValueError('Error: shift in quantiles exceeds tolerance.')
-
+#     print("I am done with this PDF. Look at it")
+#     print('packet: ')
+#     print([int(x) for x in packet])
+#     import code
+#     code.interact(local=locals())
+    
     return L, bytes(packet)
 
-def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validate=None):
+def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validate=None, clip_fraction=None):
     """Internal helper function for batch encoding of PDFs.
 
     This function orchestrates the encoding process for a batch of PDFs,
@@ -260,8 +291,8 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
     if packetsize % 4 != 0:
         raise ValueError(f"Error: packetsize must be a multiple of 4, but got {packetsize}.")
 
-    if packetsize - ini_quantiles < 3:
-        raise ValueError('Error: ini_quantiles must be at most packetsize-3')
+    if packetsize - ini_quantiles < 2:
+        raise ValueError('Error: ini_quantiles must be at most packetsize-2')
 
     if data['format'] == 'PDF_histogram':
         valid = np.sum(data['PDF'],axis=1) > 0
@@ -273,6 +304,9 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
     int32col = np.zeros((len(valid),packetsize//4),dtype='>i4') 
 
     for i in range(len(valid)):
+#         print(f'Starting loop for source: {i}')
+#         print('PDF:')
+#         print(data['PDF'][i])
         if not valid[i]:
             continue
 
@@ -283,12 +317,14 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
                 quantiles = binned_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'PDF_density':    
                 quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
+               # print('quantiles = ', quantiles)
             if data['format'] == 'samples':
-                quantiles = samples_to_quantiles(data['samples'][i],Nquantiles=Nquantiles)
+                quantiles = samples_to_quantiles(data['samples'][i],Nquantiles=Nquantiles,clip_fraction=clip_fraction)
 
             try:
                 payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
             except ValueError as e:
+              #  print(f'Debug: Error: {e}') 
                 if lastgood is not None:
                     packet = lastgood
                     break
@@ -296,12 +332,13 @@ def _batch_encode(data, ini_quantiles=71, packetsize=80, tolerance=None, validat
                     Nquantiles -= 2
                     continue    
 
-            if payload_length < packetsize-5:
+            if payload_length < packetsize-3:
+               # print(f'payload size: {payload_length} is small. Adding another quantile')
                 lastgood = packet
-                Nquantiles += 2
+                Nquantiles += 1
                 continue
 
-            if payload_length == packetsize-5:
+            if payload_length == packetsize-3:
                 break
          
         int32col[i] = np.frombuffer(packet, dtype='>i4')

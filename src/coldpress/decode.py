@@ -15,33 +15,41 @@ def decode_quantiles(packet):
     Returns:
         np.ndarray: A 1D array of float values representing the decoded
             quantile locations. 
-    """    
-    eps_int = packet[0]
-    eps = eps_int*0.00001
-    xmin_int, xmax_int = struct.unpack('<HH', packet[1:5])
+    """ 
+    a_shift = 0.020202707 # allows to encode negative redshifts down to -0.02 as an integer
+    df = 4.0e-5 # resolution in log(1+z) for the redshift of the first quantile
+    eps_min = 1.0e-7 # minimum epsilon value that can be encoded
+    eps_beta = 0.03 # exponential term that determines the maximum epsilon of the encoding
+   
+    eps_byte = packet[0]
+    eps = eps_min*np.exp(eps_beta*eps_byte)
 
-    zmin = xmin_int * 0.0002 - 0.01
-    zmax = xmax_int * 0.0002 - 0.01
+    xmin_int = struct.unpack('<H', packet[1:3])[0]   
+    logq_min = xmin_int*df - a_shift
 
-    payload = packet[5:]
-    zs = [zmin]
+    payload = packet[3:]
+    zs = [logq_min]
     i = 0
     length = len(payload)
     while i < length:
         b = payload[i]
         if (b == 0) and (max(payload[i:]) == 0): # end if just trailing zeros remain
             break
-        if b < 255:
-            d = b
+        if b == 0: # prevent two quantiles from having exactly the same z by applying tiny offsets
+            zs.append(zs[-1] + 0.05*eps)
+            zs[-2] -= 0.05*eps
             i += 1
         else:
-            d = struct.unpack('>H', payload[i+1:i+3])[0]
-            i += 3
-        zs.append(zs[-1] + d * eps)
+            if b < 255:
+                d = b
+                i += 1
+            else:
+                d = struct.unpack('>H', payload[i+1:i+3])[0]
+                i += 3
+            zs.append(zs[-1] + d * eps)
 
-    # finally add zmax endpoint
-    zs.append(zmax)
-    return np.array(zs)
+    # convert from log(1+z) to z
+    return np.exp(np.array(zs))-1
 
 def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False):
     """Converts quantile locations into a binned probability density function (PDF).
@@ -105,8 +113,8 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         if Nbins is not None:
             # Handle case of a delta function to avoid a zero-width range
             if range_min == range_max:
-                range_min -= 0.01
-                range_max += 0.01
+                range_min -= 0.0001
+                range_max += 0.0001
             z_grid = np.linspace(range_min, range_max, Nbins)
         elif dz is not None:
             # Snap auto-calculated range to the dz grid if z_min/z_max not provided
