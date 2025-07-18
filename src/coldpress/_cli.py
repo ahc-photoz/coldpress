@@ -9,9 +9,14 @@ from astropy.io import fits
 
 from . import __version__
 from .encode import _batch_encode
-from .decode import decode_to_binned, decode_quantiles, quantiles_to_binned
-from .stats import measure_from_quantiles, ALL_QUANTITIES
-from .utils import step_pdf_from_quantiles, plot_from_quantiles
+from .decode import decode_to_binned, decode_quantiles
+from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
+from .utils import plot_from_quantiles
+
+# --- Constants for Default Column Names ---
+DEFAULT_ID_COL = 'ID'
+DEFAULT_ENCODED_COL = 'coldpress_PDF'
+DEFAULT_DECODED_COL = 'PDF_decoded'
 
 # --- Logic for the 'info' command ---
 def info_logic(args):
@@ -281,6 +286,7 @@ def plot_logic(args):
             - id (list, optional): List of source IDs to plot.
             - first (int, optional): Plot the first N sources.
             - plot_all (bool): Flag to plot all sources.
+            - interactive (bool): Flag to show plots interactively.
             - idcol (str, optional): Column name containing source IDs.
             - encoded (str): Name of the column with encoded PDFs.
             - outdir (str): Directory to save plot files.
@@ -308,20 +314,19 @@ def plot_logic(args):
                 print(f"Error: Quantity column '{q_col}' not found in FITS table.", file=sys.stderr)
                 sys.exit(1)
 
+    # Determine which rows to plot based on the mutually exclusive arguments
     if args.plot_all:
         indices_to_plot = range(len(data))
-        print(f"Plotting all {len(indices_to_plot)} sources...")
     elif args.first is not None:
-        if args.first <= len(data):
-            indices_to_plot = range(args.first)
-            print(f"Plotting first {len(indices_to_plot)} sources...")
-        else:
-            print(f"Warning: first {args.first} PDFs were requested but file contais only {len(data)}. Will plot all of them.")
-            indices_to_plot = range(len(data))
-    else:    
+        num_to_plot = min(args.first, len(data))
+        if args.first > len(data):
+            print(f"Warning: Requested first {args.first} PDFs, but file only contains {len(data)}. Plotting all sources.")
+        indices_to_plot = range(num_to_plot)
+    else:  # This handles the 'id' case, which is the default if not the others
         if args.idcol not in data.columns.names:
             print(f"Error: --id specified, but no '{args.idcol}' column found in {args.input}", file=sys.stderr)
             sys.exit(1)
+        
         source_ids = list(args.id)
         id_column_as_str = data[args.idcol].astype(str)
         source_ids_as_str = np.asarray(source_ids, dtype=str)
@@ -329,12 +334,15 @@ def plot_logic(args):
 
         if len(indices_to_plot) != len(source_ids):
             print("Warning: Some specified IDs were not found in the file.", file=sys.stderr)
-        print(f"Found {len(indices_to_plot)} of {len(source_ids)} specified IDs to plot.")
+        
+    print(f"Plotting {len(indices_to_plot)} source(s)...")
 
-    os.makedirs(args.outdir, exist_ok=True)
+    if not args.interactive:
+        os.makedirs(args.outdir, exist_ok=True)
 
     for i in indices_to_plot:
-        source_id_val = data[args.idcol][i] if (args.idcol is not None) and (args.idcol in data.columns.names) else f"row_{i}"
+        # Corrected logic for determining the source ID string
+        source_id_val = data[args.idcol][i] if args.idcol is not None and args.idcol in data.columns.names else f"row_{i}"
         
         if not np.any(qcold[i] != 0):
             print(f"Skipping source {source_id_val}: No valid PDF data.")
@@ -349,16 +357,24 @@ def plot_logic(args):
                 if actual_col_name:
                     markers_to_plot[q_col] = data[actual_col_name][i]
 
-        output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
+        output_filename = None
+        if not args.interactive:
+            output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
         
-        plot_from_quantiles(
-            quantiles,
-            output_filename=output_filename,
-            source_id=source_id_val,
-            method=args.method,
-            markers=markers_to_plot
-        )
-        print(f"Saved plot to {output_filename}")
+        try:
+            plot_from_quantiles(
+                quantiles,
+                output_filename=output_filename,
+                interactive=args.interactive,
+                source_id=source_id_val,
+                method=args.method,
+                markers=markers_to_plot
+            )
+            if not args.interactive:
+                print(f"Saved plot to {output_filename}")
+        except ImportError as e:
+            print(e, file=sys.stderr)
+            sys.exit(1)
 
 # --- Logic for the 'check' command ---
 def check_logic(args):
@@ -481,10 +497,10 @@ def main():
     format_group.add_argument('--density', type=str, help='Name of input column containing probability densities sampled in a grid of redshifts.')
     format_group.add_argument('--binned', type=str, help='Name of input column containing probabilities inside redshift bins.')
     format_group.add_argument('--samples', type=str, help='Name of input column containing a set of random redshift samples from the underlying probability distribution.')
-    parser_encode.add_argument('-o', '--out-encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of output column containing the cold-pressed PDFs.')
-    parser_encode.add_argument('--zmin', type=float, help='Lowest redshift in the grid (with --density) or bins (with --binned).')
-    parser_encode.add_argument('--zmax', type=float, help='Highest redshift in the grid (with --density) or bins (with --binned).')
-    parser_encode.add_argument('--length', type=int, nargs='?', default=80, help='Length of cold-pressed PDFs in bytes (must be multiple of 4).')
+    parser_encode.add_argument('-o', '--out-encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of output column containing the cold-pressed PDFs.')
+    parser_encode.add_argument('--zmin', type=float, help='Lowest redshift in the grid/bins')
+    parser_encode.add_argument('--zmax', type=float, help='Highest redshift in the grid/bins')
+    parser_encode.add_argument('--length', type=int, nargs='?', default=80, help='Length of compressed PDFs in bytes (must be multiple of 4).')
     parser_encode.add_argument('--validate', action='store_true', default=False, help='Verify accuracy of recovered quantiles.')
     parser_encode.add_argument('--tolerance', type=float, nargs='?', default=0.001, help='Maximum shift tolerated for the redshift of the quantiles.')
     parser_encode.add_argument('--keep-orig', action='store_true', help='Include the original input column with binned PDFs or samples in the output file.')
@@ -495,20 +511,20 @@ def main():
     parser_decode = subparsers.add_parser('decode', help='Extract PDFs previously encoded with ColdPress.')
     parser_decode.add_argument('input', type=str, help='Name of input FITS catalog')
     parser_decode.add_argument('output', type=str, help='Name of output FITS catalog')
-    parser_decode.add_argument('--encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of column containing cold-pressed PDFs.')
-    parser_decode.add_argument('-o', '--out-binned', type=str, nargs='?', default='PDF_decoded', help='Name of output column for extracted binned PDFs.')
+    parser_decode.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of column containing cold-pressed PDFs.')
+    parser_decode.add_argument('-o', '--out-binned', type=str, nargs='?', default=DEFAULT_DECODED_COL, help='Name of output column for extracted binned PDFs.')
     parser_decode.add_argument('--zmin', type=float, help='Redshift of the first bin.')
     parser_decode.add_argument('--zmax', type=float, help='Redshift of the last bin.')
     parser_decode.add_argument('--zstep', type=float, help='Width of the redshift bins.')
-    parser_decode.add_argument('--force-range', action='store_true', help='Force binning to the range given by [zmin,zmax] even if some PDFs are truncated.')
-    parser_decode.add_argument('--method', type=str, nargs='?', default='linear', choices=['linear','spline'], help='Interpolation method for reconstruction of the binned PDF (default: linear).')
+    parser_decode.add_argument('--force-range', action='store_true', help='Force binning to the range [zmin,zmax] even if PDFs are truncated.')
+    parser_decode.add_argument('--method', type=str, nargs='?', default='linear', choices=['linear','spline'], help='Interpolation method for PDF reconstruction (default: linear).')
     parser_decode.set_defaults(func=decode_logic)
 
     # --- Parser for the "measure" command ---
     parser_measure = subparsers.add_parser('measure', help='Compute point estimates from compressed PDFs.')
     parser_measure.add_argument('input', type=str, nargs='?', help='Name of input FITS table containing cold-pressed PDFs.')
     parser_measure.add_argument('output', type=str, nargs='?', help='Name of output FITS table containing point estimates measured on the PDFs.')
-    parser_measure.add_argument('--encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of column containing cold-pressed PDFs.')
+    parser_measure.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of column containing cold-pressed PDFs.')
     choices_list = sorted(list(ALL_QUANTITIES) + ['ALL'])
     parser_measure.add_argument('--quantities', type=str, nargs='+', default=['all'], choices=choices_list, metavar='QUANTITY', help='List of quantities to measure from the PDFs (default: all).')
     parser_measure.add_argument('--odds-window', type=float, default=0.03, help='Half-width of the integration window for odds calculation.')
@@ -523,8 +539,9 @@ def main():
     plot_group.add_argument('--id', nargs='+', type=str, help='List of ID(s) of the source(s) to plot.')
     plot_group.add_argument('--first', metavar='N', type=int, help='plot PDFs for the first N sources in the file.')
     plot_group.add_argument('--plot-all', action='store_true', dest='plot_all', help='Plot PDFs for all the sources in the file.')
+    parser_plot.add_argument('--interactive', action='store_true', help='Display plots in an interactive window instead of saving to file.')
     parser_plot.add_argument('--idcol', type=str, nargs='?', help='Name of input column containing source IDs.')
-    parser_plot.add_argument('--encoded', type=str, nargs='?', default='coldpress_PDF', help='Name of input column containing cold-pressed PDFs.')
+    parser_plot.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of input column containing cold-pressed PDFs.')
     parser_plot.add_argument('--outdir', type=str, default='.', help='Output directory for plot files.')
     parser_plot.add_argument('--format', type=str, default='png', help='Output format for plots.')
     parser_plot.add_argument('--method', type=str, default='all', choices=['steps', 'spline', 'all'], help='PDF reconstruction method for plots.')
@@ -558,7 +575,6 @@ def main():
 
     if args.command == 'measure' and args.list_quantities:
         print("Available quantities for the 'measure' command:")
-        from .stats import QUANTITY_DESCRIPTIONS
         for name, desc in QUANTITY_DESCRIPTIONS.items():
             print(f"  {name:<15} {desc}")
         sys.exit(0) 

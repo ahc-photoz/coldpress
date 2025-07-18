@@ -9,6 +9,7 @@
 - The definition of `Z_MODE` is now more robust, calculated as the center of the narrowest inter-quantile interval within the 68% Highest Posterior Density Credible Interval.
 
 ### Added
+- New `--interactive` option for the `plot`command allows interactive visualization of PDFs.
 - New `--clip-fraction` option for the `encode` command to handle outliers in PDF samples.
 - New `clip_fraction` keyword in the `samples_to_quantiles()` function.
 

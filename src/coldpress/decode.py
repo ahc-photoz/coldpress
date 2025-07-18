@@ -116,6 +116,7 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
                 range_min -= 0.0001
                 range_max += 0.0001
             z_grid = np.linspace(range_min, range_max, Nbins)
+            dz = z_grid[1]-z_grid[0]
         elif dz is not None:
             # Snap auto-calculated range to the dz grid if z_min/z_max not provided
             if z_min is None: range_min = dz * np.floor(zq[0] / dz)

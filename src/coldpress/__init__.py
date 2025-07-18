@@ -23,7 +23,7 @@ Citation:
 
 __author__ = "Antonio Hernán Caballero"
 __email__ = "ahernan@cefca.es"
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __license__ = "GPLv3"
 __copyright__ = "Copyright 2025, Antonio Hernán Caballero"
 

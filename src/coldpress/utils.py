@@ -72,8 +72,8 @@ def step_pdf_from_quantiles(quantiles):
     p_steps_extended = np.concatenate(([0],p_steps,[0]))
     return z_steps_extended, p_steps_extended
     
-def plot_from_quantiles(quantiles, output_filename, markers=None, source_id=None, method='all'):
-    """Generates and saves a plot of a single PDF from its quantiles.
+def plot_from_quantiles(quantiles, output_filename=None, interactive=False, markers=None, source_id=None, method='all'):
+    """Generates and saves or displays a plot of a single PDF from its quantiles.
 
     Reconstructs a PDF using one or more methods ('steps', 'spline') and
     saves the resulting plot to a file. It can also overplot vertical lines
@@ -81,9 +81,12 @@ def plot_from_quantiles(quantiles, output_filename, markers=None, source_id=None
 
     Args:
         quantiles (np.ndarray): The array of quantile values for one PDF.
-        output_filename (str): The path where the plot file will be saved.
+        output_filename (str, optional): The path to save the plot file. Required
+            if `interactive` is False. Defaults to None.
+        interactive (bool, optional): If True, display the plot in an interactive
+            window instead of saving. Defaults to False.
         markers (dict, optional): A dictionary of {name: value} to mark with
-            vertical lines on the plot. Defaults to None.
+            vertical lines. Defaults to None.
         source_id (str, optional): An identifier for the source, used in the
             plot title. Defaults to None.
         method (str, optional): The PDF reconstruction method to plot. Can be
@@ -91,14 +94,15 @@ def plot_from_quantiles(quantiles, output_filename, markers=None, source_id=None
             
     Raises:
         ImportError if matplotlib is not installed.
-                
+        ValueError: If not in interactive mode and output_filename is not provided.          
     """
     
     try:
         import matplotlib.pyplot as plt
     except ImportError:
-        raise ImportError("Error: matplotlib is required for plotting.", file=sys.stderr)
-
+        # Re-raise the error so the calling function can handle it.
+        raise ImportError("matplotlib is required for plotting.")
+        
     from .decode import quantiles_to_binned
     
     plt.figure(figsize=(8, 6))
@@ -108,8 +112,7 @@ def plot_from_quantiles(quantiles, output_filename, markers=None, source_id=None
         plt.step(z_steps[:-1], p_steps, where='post', label='PDF (steps)')
 
     if method == 'spline' or method == 'all':
-        zvector = np.linspace(quantiles[0], quantiles[-1], 500)
-        pdf = quantiles_to_binned(quantiles, zvector=zvector, method='spline')
+        zvector, pdf = quantiles_to_binned(quantiles, Nbins=500, method='spline')
         plt.plot(zvector, pdf, label='PDF (spline)')
 
     if markers:
@@ -134,5 +137,11 @@ def plot_from_quantiles(quantiles, output_filename, markers=None, source_id=None
     plt.legend()
     plt.tight_layout()
 
-    plt.savefig(output_filename)
-    plt.close()
+    if interactive:
+        plt.show()
+    else:
+        if output_filename is None:
+            plt.close() # Close the figure to avoid memory leaks
+            raise ValueError("output_filename must be provided when not in interactive mode.")
+        plt.savefig(output_filename)
+        plt.close()
