@@ -15,7 +15,7 @@ The **coldpress** Python package implements the *ColdPress* algorithm for fast a
 
 Regardless of the input format, the *ColdPress* algorithm computes the redshifts *z*<sub>*i*</sub> that correspond to the quantiles *q*<sub>*i*</sub> of the CDF and encodes the differences *∆*<sub>*i*</sub> = *z*<sub>*i*</sub> - *z*<sub>*i*-1</sub> using (most often) a single byte.
 
-Once the PDFs are compressed in the **coldpress** format, **coldpress** can perform multiple tasks with them, including resampling to a new grid, visualization, and measurement of statistics (mode, mean, confidence intervals, etc.).
+Once the PDFs are stored in the **coldpress** format, **coldpress** can perform multiple tasks with them, including resampling to a new grid, visualization, and measurement of statistics (mode, mean, confidence intervals, etc.).
 
 ## Installation
 
@@ -157,9 +157,9 @@ coldpress plot hsc_sample_encoded.fits --idcol ID --id 73979566133084512
 To reconstruct a continuous PDF from a discrete set of quantiles, **coldpress** must interpolate the CDF. It supports two methods:
 
 * **Linear (`steps`):** A linear interpolation of the CDF results in a constant *P(z)* between quantiles, which is rendered as a step function.
-* **Monotonic Cubic Spline (`spline`):** This produces a smooth *P(z)* curve while ensuring the cumulative probability in each inter-quantile interval is preserved.
+* **Monotonic Cubic Spline (`spline`):** This produces a smooth *P(z)* curve while ensuring that P(z)<0 never happens and that the integrated probability for each inter-quantile interval is conserved.
 
-By default, both methods are shown. You can choose to display only one using `--method steps` or `--method spline`.
+By default, both interpolation methods are shown in the plots. You can choose to display only one using `--method steps` or `--method spline`.
 
 You can also overplot any numerical quantity from the FITS table (such as the ones we just calculated with the `measure` command) as a vertical line using the `--quantities` flag followed by the relevant column names.
 
@@ -232,6 +232,6 @@ You can use the following BibTeX entry:
 
 ## License
 
-This project is licensed under the GNU *Lesser* General Public License v3.0 (LGPLv3).
+**coldpress** is licensed under the GNU *Lesser* General Public License v3.0 (LGPLv3).
 
-This license was chosen to allow seamless integration as a dependency in other software projects, while still encouraging contributions back to `coldpress` itself. For the full terms and conditions, please see the `COPYING` file.
+This license was chosen to allow seamless integration as a dependency in other software projects, while still encouraging contributions back to **coldpress** itself. For the full terms and conditions, please see the `COPYING` file.
