@@ -105,15 +105,15 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
         
     from .decode import quantiles_to_binned
     
-    plt.figure(figsize=(8, 6))
+    fig, ax = plt.subplots(figsize=(8, 6))
 
     if method == 'steps' or method == 'all':
         z_steps, p_steps = step_pdf_from_quantiles(quantiles)
-        plt.step(z_steps[:-1], p_steps, where='post', label='PDF (steps)')
+        ax.step(z_steps[:-1], p_steps, where='post', label='PDF (steps)')
 
     if method == 'spline' or method == 'all':
-        zvector, pdf = quantiles_to_binned(quantiles, Nbins=500, method='spline')
-        plt.plot(zvector, pdf, label='PDF (spline)')
+        zvector, pdf = quantiles_to_binned(quantiles, Nbins=500, method='spline', renormalize=False)
+        spline_line, = ax.plot(zvector, pdf, label='PDF (spline)')
 
     if markers:
         linestyles = [':', '--', '-.']
@@ -125,23 +125,41 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
                 color = colors[(i+2) % len(colors)]
                 plt.axvline(x=value, linestyle=style, color=color, label=f'{name} = {value:.4f}', alpha=0.9)
 
-    plt.xlabel('Redshift (z)')
-    plt.ylabel('Probability Density P(z)')
+    ax.set_xlabel('Redshift (z)')
+    ax.set_ylabel('Probability Density P(z)')
     
     title = 'Reconstructed PDF'
     if source_id:
         title += f' for Source {source_id}'
-    plt.title(title)
+    ax.set_title(title)
     
-    plt.grid(True, alpha=0.4)
-    plt.legend()
-    plt.tight_layout()
+    ax.grid(True, alpha=0.4)
+    ax.legend()
 
     if interactive:
+        def on_zoom(axes):
+            """Callback function to execute when the x-axis limits change."""
+            # Get the new visible redshift range
+            zmin, zmax = axes.get_xlim()
+            
+            # Re-calculate the spline PDF on a new high-res grid for the visible range
+            new_zvector, new_pdf = quantiles_to_binned(quantiles, Nbins=500, z_min=zmin, z_max=zmax, method='spline', force_range=True, renormalize=False)
+            
+            # Efficiently update the line data instead of replotting
+            spline_line.set_data(new_zvector, new_pdf)
+            
+            # Redraw the canvas
+            axes.figure.canvas.draw_idle()
+
+        # Connect the callback function to the 'xlim_changed' event
+        ax.callbacks.connect('xlim_changed', on_zoom)
+        
+        plt.tight_layout()
         plt.show()
     else:
         if output_filename is None:
             plt.close() # Close the figure to avoid memory leaks
             raise ValueError("output_filename must be provided when not in interactive mode.")
+        plt.tight_layout()            
         plt.savefig(output_filename)
         plt.close()

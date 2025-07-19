@@ -2,17 +2,17 @@
 
 
 
-## [2.0.0] - 2025-07-18
+## [2.0.0] - 2025-07-19
 
 ### Changed
-- **BREAKING CHANGE:** The core encoding algorithm now compresses `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. The size and structure of the header of compressed PDF packets has also changed. PDFs encoded with previous versions are no longer compatible and must be re-encoded.
-- The decoding algorithm now detects and corrects the seesaw pattern caused by rounding of inter-quantile jumps to single digits in high probability density regions. A mechanism for
-preventing zero inter-quantile separation in unresolved PDFs is also implemented.
+- **BREAKING CHANGE:** The core encoding algorithm now compresses `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. The size and structure of the header of compressed PDF packets has also changed. **PDFs encoded with previous versions are no longer compatible and must be re-encoded.**
+- The decoding algorithm now detects and corrects the seesaw pattern caused by rounding of inter-quantile jumps to small integers in intervals with high probability density. A mechanism for
+preventing zero inter-quantile separation is also implemented.
 - The definition of `Z_MODE` is now more robust, calculated as the center of the narrowest inter-quantile interval within the 68% Highest Posterior Density Credible Interval.
 
 ### Added
 - New `--interactive` option for the `plot`command allows interactive visualization of PDFs.
-- New `--clip-fraction` option for the `encode` command to handle outliers in PDF samples.
+- New `--clip-fraction` option for the `encode` command to remove outliers from random samples.
 - New `clip_fraction` keyword in the `samples_to_quantiles()` function.
 
 ### Fixed

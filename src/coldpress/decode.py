@@ -43,18 +43,18 @@ def decode_quantiles(packet):
         
     # remove seesaw pattern due to small jump values at high P(z)
     new_jumps = np.array(jumps).astype(float)
-    insaw = False
-    for i in range(1,len(jumps)-1):
-        if not insaw and (jumps[i] < 10) and (abs(jumps[i]-jumps[i-1]) == 1):
-            insaw = True
-            init_saw = i-1
-            level = jumps[init_saw]
-            continue
-        if insaw and ((jumps[i] > 10) or (abs(jumps[i]-level) > 1)):
-            insaw = False
-            end_saw = i
-            if end_saw - init_saw > 3:
-                new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
+#     insaw = False
+#     for i in range(1,len(jumps)-1):
+#         if not insaw and (jumps[i] < 15) and (abs(jumps[i]-jumps[i-1]) == 1):
+#             insaw = True
+#             init_saw = i-1
+#             level = jumps[init_saw]
+#             continue
+#         if insaw and ((jumps[i] > 15) or (abs(jumps[i]-level) > 1)):
+#             insaw = False
+#             end_saw = i
+#             if end_saw - init_saw > 3:
+#                 new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
     
     # fix zero-valued jumps by adding a tiny offset that gets compensated in the next non-zero jump    
     if np.min(new_jumps) <= 0:
@@ -79,7 +79,7 @@ def decode_quantiles(packet):
     zs[1:] = logq_min + np.cumsum(new_jumps) * eps
     return np.exp(np.array(zs))-1
 
-def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False):
+def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
     """Converts quantile locations into a binned probability density function (PDF).
 
     Reconstructs a regularly gridded PDF from an array of quantile locations.
@@ -182,17 +182,25 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         F_grid[edges > zq[-1]] = 1.
         inside = (edges >= zq[0]) & (edges <= zq[-1])
         F_inside = _monotone_natural_spline(edges[inside], zq, Fq)
+        if renormalize:
+            F_inside /= F_inside[-1]
         if F_inside.size > 0 and F_inside[-1] > 0:
-            F_grid[inside] = F_inside / F_inside[-1]
+            F_grid[inside] = F_inside
     else:
         raise ValueError(f"Unknown interpolation method '{method}'. Choose 'linear' or 'spline'.")
         
-    pdf = F_grid[1:] - F_grid[:-1]
-        
-    pdf_sum = np.sum(pdf * dz_eff)
-    if pdf_sum > 0:
+    pdf = (F_grid[1:] - F_grid[:-1]) #/dz_eff
+#     import code
+#     code.interact(local=locals())
+    if renormalize:   
+        pdf_sum = np.sum(pdf * dz_eff)
+        if pdf_sum > 0:
+            pdf /= pdf_sum
+    else:
+        pdf_sum = dz_eff
         pdf /= pdf_sum
-        
+     
+            
     # Return both the grid and the PDF if the grid was generated internally
     if zvector is None:
         return z_grid, pdf
