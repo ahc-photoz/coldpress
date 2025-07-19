@@ -46,6 +46,7 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
         ValueError: If an unknown quantity is requested.
     """
     dependencies = {
+        'Z_MODE': ['Z_MIN_HPDCI68','Z_MAX_HPDCI68'],
         'Z_MODE_ERR': ['Z_MODE'],
         'ODDS_MODE': ['Z_MODE'],
         'ODDS_MEAN': ['Z_MEAN']

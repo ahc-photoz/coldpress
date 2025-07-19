@@ -8,7 +8,7 @@ import numpy as np
 from astropy.io import fits
 
 from . import __version__
-from .encode import _batch_encode
+from .encode import encode_from_binned, encode_from_density, encode_from_samples
 from .decode import decode_to_binned, decode_quantiles
 from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
 from .utils import plot_from_quantiles
@@ -84,15 +84,14 @@ def encode_logic(args):
             - density (str, optional): Name of the column with density PDFs.
             - binned (str, optional): Name of the column with binned PDFs.
             - samples (str, optional): Name of the column with PDF samples.
-            - zmin (float, optional): Min redshift for binned PDFs.
-            - zmax (float, optional): Max redshift for binned PDFs.
+            - zmin (float, optional): Min redshift.
+            - zmax (float, optional): Max redshift.
             - out_encoded (str): Name for the output column with encoded data.
             - validate (bool): Whether to validate the encoding accuracy.
             - tolerance (float): Tolerance for validation.
             - keep_orig (bool): Whether to keep the original PDF column.
             - clip_fraction (float): Fraction of samples to be clipped out at the extremes of the redshift range.
     """
-    import time
     if args.length % 4 != 0:
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
         sys.exit(1)
@@ -101,37 +100,40 @@ def encode_logic(args):
 
     with fits.open(args.input) as h:
         header = h[1].header
+        orig_cols = list(h[1].columns)
+        
         if args.samples is not None:
             orig_column = args.samples
-            data = {'format': 'samples', 'samples': h[1].data[args.samples]}
             history = f'PDFs from samples in column {args.samples} cold-pressed as {args.out_encoded}'
             print(f"Generating quantiles from random redshift samples and compressing into {args.length}-byte packets...")
-        else:
-            if args.binned is not None:
-                orig_column = args.binned
-                data = {'format': 'PDF_histogram'}
-                history = f'Binned PDFs in column {args.binned} cold-pressed as {args.out_encoded}'
+            if (args.zmin is not None) and (args.zmax) is not None:
+                clip_range = [args.zmin, args.zmax]
             else:
-                orig_column = args.density   
-                data = {'format': 'PDF_density'}
-                history = f'Probability density in column {args.density} cold-pressed as {args.out_encoded}'
-                 
-            data['PDF'] = h[1].data[orig_column]
-            data['zvector'] = np.linspace(args.zmin, args.zmax, data['PDF'].shape[1])    
-      
-            cratio = data['PDF'].shape[1]*data['PDF'].itemsize/args.length
-            print(f"Compressing PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
-
-        orig_cols = list(h[1].columns)
-
-        start = time.process_time()
-
-        coldpress_PDF = _batch_encode(data, packetsize=args.length, ini_quantiles=args.length-8, validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction) 
+                clip_range = None    
+            samples = h[1].data[args.samples]
+            coldpress_PDF = encode_from_samples(samples, packetsize=args.length, ini_quantiles=args.length-8, 
+                                                validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction, 
+                                                clip_range=clip_range) 
+        elif args.binned is not None:
+            orig_column = args.binned
+            history = f'Binned PDFs in column {args.binned} cold-pressed as {args.out_encoded}'
+            PDF = h[1].data[args.binned]
+            zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
+            cratio = PDF.shape[1]*PDF.itemsize/args.length
+            print(f"Compressing binned PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
+            coldpress_PDF = encode_from_binned(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+                                                validate=args.validate, tolerance=args.tolerance)
+        elif args.density is not None:
+            orig_column = args.density
+            history = f'Probability density in column {args.density} cold-pressed as {args.out_encoded}'
+            PDF = h[1].data[args.density]
+            zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
+            cratio = PDF.shape[1]*PDF.itemsize/args.length
+            print(f"Compressing density PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
+            coldpress_PDF = encode_from_density(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+                                                validate=args.validate, tolerance=args.tolerance)
+            
                                                                                                
-        end = time.process_time()
-        cpu_seconds = end - start
-        print(f"{coldpress_PDF.shape[0]} PDFs cold-pressed in {cpu_seconds:.6f} CPU seconds")
-
         nints = args.length // 4
         new_col = fits.Column(name=args.out_encoded, format=f'{nints}J', array=coldpress_PDF)
 
@@ -565,8 +567,8 @@ def main():
     if args.command == 'encode':
         if args.binned and (args.zmin is None or args.zmax is None):
             parser.error('--zmin and --zmax are required when encoding from binned PDFs (--binned)')
-        if args.samples and (args.zmin is not None or args.zmax is not None):
-            parser.error('--zmin and --zmax can only be used with binned PDFs (--binned), not random samples (--samples)')
+        if args.density and (args.zmin is None or args.zmax is None):
+            parser.error('--zmin and --zmax are required when encoding from probability density (--density)')
         if args.samples is None and args.clip_fraction != 0.:
             parser.error('--clip-fraction can only be used with PDFs by random samples (--samples)')    
 

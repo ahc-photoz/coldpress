@@ -2,20 +2,20 @@
 
 **A toolkit for the efficient compression and analysis of redshift PDFs.**
 
-The **coldpress** Python package implements the *ColdPress* algorithm for fast and efficient compression of probability density functions (PDFs) into a compact, fixed-size encoding. This is ideal for storing millions of redshift PDFs in large astronomical databases.
-
-The *ColdPress* algorithm works by computing the redshifts *z*<sub>*i*</sub> that correspond to the quantiles *q*<sub>*i*</sub> of the cumulative distribution function (CDF) and encoding the differences *∆*<sub>*i*</sub> = *z*<sub>*i*</sub> - *z*<sub>*i*-1</sub> using (most often) a single byte.
+The **coldpress** Python package implements the *ColdPress* algorithm for fast and efficient compression of probability distribution functions (PDFs) into a compact, fixed-size encoding. This is ideal for storing millions of redshift PDFs in large astronomical databases.
 
 > [!NOTE]
 > The details of the algorithm and a performance comparison with alternative methods are presented in [this research note](https://iopscience.iop.org/article/10.3847/2515-5172/adeca6).
 
-The CDF is obtained by integrating the probability density *P*(*z*). 
-**coldpress** accepts as input the probability density *P*(*z*) in two common formats:
+**coldpress** computes the cumulative distribution function (CDF) from the input data, which must be provided in one of three formats:
 
-1.  **Binned PDF:** An array containing the values of *P(z)* at regular intervals from *z*<sub>min</sub> to *z*<sub>max</sub>. This is the typical output of most SED-fitting photo-z codes.
-2.  **PDF from random samples:** An array of random redshift values drawn from the underlying probability distribution *P(z)*. This is the natural output of photo-z codes that use Monte Carlo methods.
+1.  **Binned PDF:** An array containing the probabilities *P<sub>i</sub>* for the true redshift being inside the bin *i* centered at *z<sub>i</sub>*. The bins must be evenly spaced from *z*<sub>min</sub> to *z*<sub>max</sub>. The CDF is evaluated at the ending edge of each bin as the cumulative sum of the *P<sub>i</sub>*. This is the fastest, but also less accurate method. Not widely used.
+2. **Grid of *P*(*z*)**: An array containing the probability density *P*(*z*) measured in a grid of redshifts *z<sub>i</sub>*. This is the typical output of most SED-fitting photo-z codes. The CDF is evaluated by numeric integration of *P*(*z*), which is linearly interpolated between the points of the grid.
+3. **PDF from random samples:** An array of random redshift values drawn from the underlying probability distribution *P(z)*. This is the raw output of any software that uses Monte Carlo to generate probability distributions. The CDF is computed as the fraction of samples below a given redshift.
 
-Using the compressed representation of the CDF, **coldpress** can perform multiple tasks, including generating binned PDFs in a new grid, creating random samples, measuring statistics (mode, mean, confidence intervals, etc.), and plotting the reconstructed PDF.
+Regardless of the input format, the *ColdPress* algorithm computes the redshifts *z*<sub>*i*</sub> that correspond to the quantiles *q*<sub>*i*</sub> of the CDF and encodes the differences *∆*<sub>*i*</sub> = *z*<sub>*i*</sub> - *z*<sub>*i*-1</sub> using (most often) a single byte.
+
+Once the PDFs are compressed in the **coldpress** format, **coldpress** can perform multiple tasks with them, including resampling to a new grid, visualization, and measurement of statistics (mode, mean, confidence intervals, etc.).
 
 ## Installation
 
@@ -95,18 +95,18 @@ This shows that the `PDF` column samples *P(z)* from z=0 to z=7 in steps of 0.01
 To compress the PDFs, we provide the input and output filenames, the redshift range, and the name of the column containing the PDFs.
 
 ```bash
-coldpress encode hsc_sample.fits hsc_sample_encoded.fits --zmin 0 --zmax 7 --binned PDF
+coldpress encode hsc_sample.fits hsc_sample_encoded.fits --zmin 0 --zmax 7 --density PDF
 ```
 ```
-Opening input file: hsc_sample.fits
-Compressing PDFs into 80-byte packets (compression ratio: 35.05)...
-1000 PDFs cold-pressed in 0.170699 CPU seconds
+Compressing density PDFs into 80-byte packets (compression ratio: 35.05)...
+1000 PDFs cold-pressed in 0.369613 CPU seconds
 Excluding column 'PDF' from output FITS table.
 Writing compressed data to: hsc_sample_encoded.fits
 Done.
 ```
+
 > [!IMPORTANT]
-> The `--binned PDF` option tells **coldpress** that the `PDF` column contains binned PDFs. If your column contained random samples, you would use `--samples` instead.
+> The `--density PDF` option tells **coldpress** that the `PDF` column contains P(z) sampled in a grid. If your column contains integrated probability in bins, or random samples, you should use `--binned` or `--samples` instead.
 
 By default, the original `PDF` column is removed. To keep it, add the `--keep-orig` flag. The compressed data is saved in a new column named `coldpress_PDF`.
 
@@ -137,12 +137,11 @@ Done.
 
 You can quickly visualize any PDF directly from its compressed representation using the `plot` command. 
 
-To plot the first ten PDFs in the table:
+To plot the first ten PDFs in the table as PNG files:
 
 ```bash
 coldpress plot hsc_sample_encoded.fits --first 10 
 ```
-This command saves the plots as PNG files in the current directory.
 
 To plot the PDF for a specific source, use the `--id` and `--idcol` flags:
 
@@ -155,14 +154,14 @@ coldpress plot hsc_sample_encoded.fits --idcol ID --id 73979566133084512
 > [!IMPORTANT]
 > You don't need to decompress the PDFs into a new file before plotting. The `plot` command decodes them on the fly.
 
-To reconstruct the continuous PDF from a discrete set of quantiles, **coldpress** must interpolate the CDF. It supports two methods:
+To reconstruct a continuous PDF from a discrete set of quantiles, **coldpress** must interpolate the CDF. It supports two methods:
 
 * **Linear (`steps`):** A linear interpolation of the CDF results in a constant *P(z)* between quantiles, which is rendered as a step function.
 * **Monotonic Cubic Spline (`spline`):** This produces a smooth *P(z)* curve while ensuring the cumulative probability in each inter-quantile interval is preserved.
 
 By default, both methods are shown. You can choose to display only one using `--method steps` or `--method spline`.
 
-You can also overplot any numerical quantity from the FITS table as a vertical line using the `--quantities` flag followed by the relevant column names.
+You can also overplot any numerical quantity from the FITS table (such as the ones we just calculated with the `measure` command) as a vertical line using the `--quantities` flag followed by the relevant column names.
 
 ```bash
 coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID --id 73979566133084907
@@ -171,6 +170,16 @@ coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID 
 
 > [!TIP] 
 > Use `--format JPEG` or `--format PDF` to save the figures in JPEG or PDF format. Use `--outdir <DIRECTORY>` to specify a different output directory.
+
+You can also open the plot in an interactive window using the `--interactive` flag. 
+
+```bash
+coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID --first 5 --interactive
+```
+![Screenshot of zoomed in PDF in interactive view](examples/screenshot.png)
+
+> [!TIP] 
+> Use the pan and zoom buttons in the interactive window to explore your PDFs in full detail!
 
 
 ### 5. Decompress PDFs with `coldpress decode`

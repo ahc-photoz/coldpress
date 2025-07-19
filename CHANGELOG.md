@@ -2,7 +2,7 @@
 
 
 
-## [2.0.0] - 2025-07-19
+## [2.0.0-beta] - 2025-07-19
 
 ### Changed
 - **BREAKING CHANGE:** The core encoding algorithm now compresses `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. The size and structure of the header of compressed PDF packets has also changed. **PDFs encoded with previous versions are no longer compatible and must be re-encoded.**
@@ -17,7 +17,8 @@ preventing zero inter-quantile separation is also implemented.
 
 ### Fixed
 - Improved accuracy of `density_to_quantiles()` by up-sampling the PDF grid, which is especially important for narrowly peaked PDFs.
-- Added a small redshift shift to decoded quantiles that have identical values to prevent singularities when reconstructing the PDF.
+- Tiny shift in quantiles that decode to same value prevents singularities when reconstructing the PDF.
+- Encoding logic restructured for readability and performance.
 
 ## [1.1.0] - 2025-07-17
 

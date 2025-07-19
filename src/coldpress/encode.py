@@ -2,40 +2,30 @@ import numpy as np
 import struct
 from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA, Q0_ZMIN, Q0_ZMAX
 import sys
+import time
 
-def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0, clip_range=[Q0_ZMIN,20.]):
+
+def samples_to_quantiles(sorted_samples, Nquantiles=100):
     """Calculates quantiles from a set of random samples of a PDF.
 
-    This function takes random draws from a probability distribution and
-    computes the values that correspond to evenly spaced quantiles
-    (e.g., percentiles). It filters out non-finite values before computation.
+    This low-level function takes sorted random samples from a probability 
+    distribution and computes the values that correspond to evenly spaced quantiles
+    (e.g., percentiles). 
+    Warning: samples are expected to be sorted by increasing value and
+    are not checked for non-finite or out-of-range values, which must be removed
+    in advance.  
 
     Args:
         samples (np.ndarray): A 1D array of random samples from the PDF.
         Nquantiles (int, optional): The number of quantiles to compute.
             Defaults to 100.
-        clip_range (list, optional): minimum and maximum redshifts considered valid.    
-        clip_fraction (float, optional): The fraction of outlier samples inside clip_range 
-        to be clipped at each extreme of the distribution.
 
     Returns:
         np.ndarray: A 1D array of `Nquantiles` values representing the
             quantile locations.
-    """
-    valid = np.isfinite(samples) & (samples > clip_range[0]) & (samples < clip_range[1])
-    Nvalid = len(valid[valid])
-    if Nvalid < Nquantiles:
-        raise ValueError('There are too few valid samples ({Nvalid}) to compute {Nquantiles} quantiles.')
-        
-    zsorted = np.sort(samples[valid])
-    targets = np.linspace(0.0, 1.0, Nquantiles) # target probability for quantiles
-
-    if clip_fraction > 0: # clip the most extreme values from the distribution
-        nclip = int(np.floor(len(zsorted)*clip_fraction))
-        if nclip > 0:
-            zsorted = zsorted[nclip:-nclip]
-            
-    return np.quantile(zsorted, targets, method='linear')
+    """        
+    targets = np.linspace(0.0, 1.0, Nquantiles) # target probability for quantiles 
+    return np.quantile(sorted_samples, targets, method='linear')
 
 
 def binned_to_quantiles(z_grid, Pz, Nquantiles=100):
@@ -147,7 +137,7 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=1
     return quantile_redshifts    
 
 
-def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
+def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     """Encodes an array of quantiles into a compact byte packet.
 
     Compresses an array of quantile locations into a fixed-size byte array.
@@ -169,7 +159,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
             tolerance. Defaults to True.
         tolerance (float, optional): The maximum allowed absolute difference
             between original and recovered quantiles during validation.
-            Defaults to 0.001.
+            Defaults to 0.0001.
 
     Returns:
         tuple[int, bytes]: A tuple containing:
@@ -213,7 +203,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
         raise ValueError(f'Error: epsilon={eps_target} is too large for 1 byte encoding.')
         
     eps = EPSILON_MIN*np.exp(EPSILON_BETA*eps_byte) # actual epsilon represented by the encoded value
-
+        
     # build payload from the quantiles 1 to N-1
     payload = bytearray()
     prev = logq_min
@@ -254,7 +244,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
     
     return L, bytes(packet)
 
-def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validate=None, clip_fraction=None):
+def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validate=None):
     """Internal helper function for batch encoding of PDFs.
 
     This function orchestrates the encoding process for a batch of PDFs,
@@ -289,22 +279,12 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
     if packetsize - ini_quantiles < 2:
         raise ValueError('Error: ini_quantiles must be at most packetsize-2')
 
-    if data['format'] == 'PDF_histogram':
-        valid = np.sum(data['PDF'],axis=1) > 0
-    if data['format'] == 'PDF_density':
-        valid = np.sum(data['PDF'],axis=1) > 0
-    if data['format'] == 'samples':
-        # check that at least some samples are finite, within encodable z range, and different from each other
-        zmin = np.nanmin(data['samples'], axis=1)
-        zmax = np.nanmax(data['samples'], axis=1)
-        valid = (zmin < Q0_ZMAX) & (zmax > Q0_ZMIN) & (zmax-zmin > 0)
+    NPDFs = data['PDF'].shape[0]
+    int32col = np.zeros((NPDFs,packetsize//4),dtype='>i4') 
 
-    int32col = np.zeros((len(valid),packetsize//4),dtype='>i4') 
+    start = time.process_time()
 
-    for i in range(len(valid)):
-        if not valid[i]:
-            continue
-
+    for i in range(NPDFs):
         Nquantiles = ini_quantiles
         lastgood = None
         while True:
@@ -313,7 +293,8 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
             if data['format'] == 'PDF_density':    
                 quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'samples':
-                quantiles = samples_to_quantiles(data['samples'][i],Nquantiles=Nquantiles,clip_fraction=clip_fraction)
+                valid = np.isfinite(data['PDF'][i]) # nan values indicate missing samples
+                quantiles = samples_to_quantiles(data['PDF'][i,valid],Nquantiles=Nquantiles)
 
             try:
                 payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
@@ -343,6 +324,10 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
          
         int32col[i] = np.frombuffer(packet, dtype='>i4')
 
+    end = time.process_time()
+    cpu_seconds = end - start
+    print(f"{NPDFs} PDFs cold-pressed in {cpu_seconds:.6f} CPU seconds")
+
     return int32col
 
 
@@ -365,9 +350,15 @@ def encode_from_binned(PDF, zvector, ini_quantiles=71, packetsize=80, tolerance=
     Returns:
         np.ndarray: A 2D array where each row is a compressed PDF packet.
     """
-    data = {'format': 'PDF_histogram', 'zvector': zvector, 'PDF': PDF}    
-    return _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
-
+    # select valid PDFs for encoding
+    Nsources = PDF.shape[0]
+    encoded = np.zeros((Nsources,packetsize//4),dtype='>i4') 
+    valid = (np.sum(PDF,axis=1) > 0) & (np.min(PDF,axis=1) >= 0)
+    
+    data = {'format': 'PDF_histogram', 'zvector': zvector, 'PDF': PDF[valid]}    
+    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    return encoded
+    
 def encode_from_density(PDF, zvector, ini_quantiles=71, packetsize=80, tolerance=None, validate=None):
     """Encodes Probability densities sampled in a grid into compressed byte packets.
 
@@ -387,14 +378,21 @@ def encode_from_density(PDF, zvector, ini_quantiles=71, packetsize=80, tolerance
     Returns:
         np.ndarray: A 2D array where each row is a compressed PDF packet.
     """
-    data = {'format': 'PDF_density', 'zvector': zvector, 'PDF': PDF}    
-    return _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
-
-def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None, validate=None):
+    # select valid PDFs for encoding
+    Nsources = PDF.shape[0]
+    encoded = np.zeros((Nsources,packetsize//4),dtype='>i4') 
+    valid = (np.sum(PDF,axis=1) > 0) & (np.min(PDF,axis=1) >= 0)
+    
+    data = {'format': 'PDF_density', 'zvector': zvector, 'PDF': PDF[valid]}    
+    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    return encoded
+    
+def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None, validate=None, clip_fraction=0., clip_range=None):
     """Encodes PDFs from random samples into compressed byte packets.
 
-    This is a high-level wrapper that takes random samples for each PDF
-    and encodes them by calling the internal `_batch_encode` function.
+    This is a high-level function that takes random samples for each PDF,
+    cleans them up, and encodes the valid ones by calling the internal 
+    `_batch_encode` function.
 
     Args:
         samples (np.ndarray): A 2D array where each row contains random
@@ -405,10 +403,51 @@ def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None
             Defaults to 80.
         tolerance (float, optional): Tolerance for validation.
         validate (bool, optional): Whether to perform validation.
-        debug (bool, optional): Unused debug flag.
 
     Returns:
         np.ndarray: A 2D array where each row is a compressed PDF packet.
     """
-    data = {'format': 'samples', 'samples': samples}
-    return _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    
+    # define default clip_range if not provided
+    if clip_range is None:
+        clip_range=[Q0_ZMIN,20]
+    
+    # create array of integers to contain encoded PDFs
+    Nsources = samples.shape[0]
+    encoded = np.zeros((Nsources,packetsize//4),dtype='>i4') 
+ 
+    # clean up samples for non-finite values or those outside the desired range
+    valid_samples = np.isfinite(samples) & (samples >= clip_range[0]) & (samples <= clip_range[1])
+    # count valid samples per source
+    n_valid = np.sum(valid_samples, axis=1)
+
+    # Reject sources with fewer valid samples than quantiles requested or all samples with same value
+    zmin = np.nanmin(samples, axis=1)
+    zmax = np.nanmax(samples, axis=1)
+    valid_source = (n_valid > ini_quantiles) & (zmax-zmin > 0)
+    n_valid_sources = len(valid_source[valid_source])
+        
+    # create array to contain clean samples
+    clean_samples = np.full((n_valid_sources,np.max(n_valid)),np.nan,dtype=float)
+    
+    # sort samples and (optionally) remove extreme values
+    i = -1 # counter for all sources
+    j = -1 # counter for valid sources
+    while i < Nsources-1:
+        i += 1
+        if not valid_source[i]:
+            continue 
+        j += 1     
+        if clip_fraction > 0:
+            zsorted = np.sort(samples[i,valid_samples[i]])
+            nclip = int(np.floor(len(zsorted)*clip_fraction))
+            if nclip > 0:
+                zsorted = zsorted[nclip:-nclip]
+        else:
+            zsorted = np.sort(samples[i,valid_samples[i]])
+            nclean = zsorted.shape[0]
+        clean_samples[j,:nclean] = zsorted  
+    
+    data = {'format': 'samples', 'PDF': clean_samples}
+    encoded[valid_source] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    return encoded
