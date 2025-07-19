@@ -2,7 +2,7 @@
 
 
 
-## [2.0.0-beta] - 2025-07-19
+## [1.0.0-beta] - 2025-07-19
 
 ### Changed
 - **BREAKING CHANGE:** The encoding algorithm now stores differences in `log(1+z)` instead of `z`. This improves accuracy and extends the effective redshift range. The size and structure of the header of compressed PDF packets has also changed. **PDFs encoded with previous versions are no longer compatible and must be re-encoded.**
@@ -20,7 +20,7 @@ preventing zero inter-quantile separation is also implemented.
 - Tiny shift in quantiles that decode to same value prevents singularities when reconstructing the PDF.
 - Encoding logic restructured for readability and performance.
 
-## [1.1.0] - 2025-07-17
+## [0.2.0] - 2025-07-17
 
 ### Added
 - New `--density` option for the `encode` command to support PDFs defined by their probability density on a regular grid.
@@ -28,6 +28,6 @@ preventing zero inter-quantile separation is also implemented.
 ### Changed
 - Exposed the `binned_to_quantiles()` function in the public API.
 
-## [1.0.0] - 2025-07-13
+## [0.1.0] - 2025-07-13
 
 - Initial release.
