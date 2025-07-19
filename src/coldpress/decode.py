@@ -43,18 +43,18 @@ def decode_quantiles(packet):
         
     # remove seesaw pattern due to small jump values at high P(z)
     new_jumps = np.array(jumps).astype(float)
-#     insaw = False
-#     for i in range(1,len(jumps)-1):
-#         if not insaw and (jumps[i] < 15) and (abs(jumps[i]-jumps[i-1]) == 1):
-#             insaw = True
-#             init_saw = i-1
-#             level = jumps[init_saw]
-#             continue
-#         if insaw and ((jumps[i] > 15) or (abs(jumps[i]-level) > 1)):
-#             insaw = False
-#             end_saw = i
-#             if end_saw - init_saw > 3:
-#                 new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
+    insaw = False
+    for i in range(1,len(jumps)-1):
+        if not insaw and (jumps[i] < 15) and (abs(jumps[i]-jumps[i-1]) == 1):
+            insaw = True
+            init_saw = i-1
+            level = jumps[init_saw]
+            continue
+        if insaw and ((jumps[i] > 15) or (abs(jumps[i]-level) > 1)):
+            insaw = False
+            end_saw = i
+            if end_saw - init_saw > 3:
+                new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
     
     # fix zero-valued jumps by adding a tiny offset that gets compensated in the next non-zero jump    
     if np.min(new_jumps) <= 0:
@@ -103,6 +103,8 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         force_range (bool, optional): If True, allows the PDF to be truncated
             if its range exceeds the specified grid. If False, raises a
             ValueError. Defaults to False.
+        renormalize (bool, optional): If True, normalize the PDF integral to 1
+            in the truncated range. If False, normalize to 1 in the original range.    
 
     Returns:
         np.ndarray or tuple[np.ndarray, np.ndarray]:
@@ -189,9 +191,7 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
     else:
         raise ValueError(f"Unknown interpolation method '{method}'. Choose 'linear' or 'spline'.")
         
-    pdf = (F_grid[1:] - F_grid[:-1]) #/dz_eff
-#     import code
-#     code.interact(local=locals())
+    pdf = (F_grid[1:] - F_grid[:-1]) 
     if renormalize:   
         pdf_sum = np.sum(pdf * dz_eff)
         if pdf_sum > 0:
@@ -200,7 +200,6 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         pdf_sum = dz_eff
         pdf /= pdf_sum
      
-            
     # Return both the grid and the PDF if the grid was generated internally
     if zvector is None:
         return z_grid, pdf

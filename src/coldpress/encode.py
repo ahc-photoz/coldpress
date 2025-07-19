@@ -1,9 +1,9 @@
 import numpy as np
 import struct
-from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA
+from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA, Q0_ZMIN, Q0_ZMAX
+import sys
 
-
-def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0):
+def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0, clip_range=[Q0_ZMIN,20.]):
     """Calculates quantiles from a set of random samples of a PDF.
 
     This function takes random draws from a probability distribution and
@@ -14,18 +14,18 @@ def samples_to_quantiles(samples, Nquantiles=100, clip_fraction=0.0):
         samples (np.ndarray): A 1D array of random samples from the PDF.
         Nquantiles (int, optional): The number of quantiles to compute.
             Defaults to 100.
-        clip_fraction (float, optional): The fraction of outlier samples to be clipped
-        on both extremes of the distribution.
+        clip_range (list, optional): minimum and maximum redshifts considered valid.    
+        clip_fraction (float, optional): The fraction of outlier samples inside clip_range 
+        to be clipped at each extreme of the distribution.
 
     Returns:
         np.ndarray: A 1D array of `Nquantiles` values representing the
             quantile locations.
     """
-    valid = np.isfinite(samples) & (samples > -0.02) & (samples < 20.)
-    if len(valid[valid]) < Nquantiles:
-        print('Error: too few samples for this many quantiles')
-        import code
-        code.interact(local=locals())
+    valid = np.isfinite(samples) & (samples > clip_range[0]) & (samples < clip_range[1])
+    Nvalid = len(valid[valid])
+    if Nvalid < Nquantiles:
+        raise ValueError('There are too few valid samples ({Nvalid}) to compute {Nquantiles} quantiles.')
         
     zsorted = np.sort(samples[valid])
     targets = np.linspace(0.0, 1.0, Nquantiles) # target probability for quantiles
@@ -238,10 +238,19 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.001):
     if validate: 
         qrecovered = decode_quantiles(packet)
         if len(qrecovered) != len(quantiles):
-            raise ValueError('Error: packet decodes to wrong number of quantiles.')
+           print('Error: packet decodes to wrong number of quantiles.')
+           print('packet: ',[int(x) for x in packet])
+           print('recovered quantiles:')
+           print(qrecovered)
+           print('original quantiles:')
+           print(quantiles)
+           import code
+           code.interact(local=locals())
+           
+           # raise ValueError('Error: packet decodes to wrong number of quantiles.')
         shift = quantiles[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
-            raise ValueError('Error: shift in quantiles exceeds tolerance.')
+            raise ValueError('Error: shift in quantiles exceeds tolerance = {tolerance:.5f}.')
     
     return L, bytes(packet)
 
@@ -285,14 +294,14 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
     if data['format'] == 'PDF_density':
         valid = np.sum(data['PDF'],axis=1) > 0
     if data['format'] == 'samples':
-        valid = np.all(np.isfinite(data['samples']), axis=1)
+        # check that at least some samples are finite, within encodable z range, and different from each other
+        zmin = np.nanmin(data['samples'], axis=1)
+        zmax = np.nanmax(data['samples'], axis=1)
+        valid = (zmin < Q0_ZMAX) & (zmax > Q0_ZMIN) & (zmax-zmin > 0)
 
     int32col = np.zeros((len(valid),packetsize//4),dtype='>i4') 
 
     for i in range(len(valid)):
-#         print(f'Starting loop for source: {i}')
-#         print('PDF:')
-#         print(data['PDF'][i])
         if not valid[i]:
             continue
 
@@ -303,25 +312,30 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
                 quantiles = binned_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'PDF_density':    
                 quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
-               # print('quantiles = ', quantiles)
             if data['format'] == 'samples':
                 quantiles = samples_to_quantiles(data['samples'][i],Nquantiles=Nquantiles,clip_fraction=clip_fraction)
 
             try:
                 payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
             except ValueError as e:
-              #  print(f'Debug: Error: {e}') 
+                if 'packet decodes' in str(e):
+                    print(e,file=sys.stderr)
+                    sys.exit(1)
+                
                 if lastgood is not None:
                     packet = lastgood
                     break
                 else:
+                    if Nquantiles < 10:
+                        print('Error: the quantile counts have decreased too much!')
+                        import code
+                        code.interact(local=locals())
                     Nquantiles -= 2
                     continue    
 
             if payload_length < packetsize-3:
-               # print(f'payload size: {payload_length} is small. Adding another quantile')
                 lastgood = packet
-                Nquantiles += 1
+                Nquantiles += 2
                 continue
 
             if payload_length == packetsize-3:
