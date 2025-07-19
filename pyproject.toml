@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coldpress"
-version = "2.0.0-beta"
+version = "1.0.0-beta"
 authors = [
   { name="Antonio Hernán Caballero", email="ahernan@cefca.es" },
 ]
@@ -27,5 +27,5 @@ dependencies = ["numpy", "astropy", "matplotlib"]
 coldpress = "coldpress._cli:main"
 
 [project.urls]
-Homepage = "https://github.com/ahc-photoz/coldpress-project"
-Issues = "https://github.com/ahc-photoz/coldpress-project/issues"
+Homepage = "https://github.com/ahc-photoz/coldpress"
+Issues = "https://github.com/ahc-photoz/coldpress/issues"
