@@ -127,13 +127,6 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
 #     else:
 #         i = np.argmax(dkminus)
 #         return quantiles[i]-width/2.
-
-# def zmode_from_quantiles(quantiles,width=0.005):
-#     diff = quantiles[3:]-quantiles[:-3]
-#     u = np.argmin(diff)
-#     diff2 = quantiles[u+1:u+4]-quantiles[u:u+3]
-#     v = np.argmin(diff2)
-#     return 0.5*(quantiles[u+v]+quantiles[u+v+1])
    
 def zmode_from_quantiles(quantiles, hpdci68=None):
     # Compute HPDCI68 if not provided

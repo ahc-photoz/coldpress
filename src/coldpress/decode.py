@@ -205,6 +205,10 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         return z_grid, pdf
     else:
         return pdf
+     
+def quantiles_to_density(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
+    """Implementation pending. Meanwhile calls quantiles_to_binned()"""
+    return quantiles_to_binned(z_quantiles, dz=dz, Nbins=Nbins, z_min=z_min, z_max=z_max, zvector=zvector, method=method, force_range=force_range, renormalize=renormalize)    
         
 def quantiles_to_samples(z_quantiles, Nsamples=100, method='linear'):
     """Generates random samples from a PDF defined by its quantiles.
@@ -280,6 +284,48 @@ def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
                 raise ValueError(f"Source {i}: {e}") from e
 
     return PDF
+    
+def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
+    """Decodes a column of compressed PDFs into a 2D array with one P(z) per row
+
+    This is a batch processing function that iterates over a column of
+    compressed byte packets, decodes each one into quantiles, and then
+    converts the quantiles into P(z) on the specified `zvector` grid.
+
+    Args:
+        int32col (np.ndarray): A 2D numpy array of type int32, where each
+            row is a compressed PDF packet.
+        zvector (np.ndarray): A 1D array defining the centers of the redshift
+            bins for the output PDFs.
+        force_range (bool, optional): If True, allows PDFs to be truncated
+            if their range exceeds the `zvector` grid. Defaults to False.
+        method (str, optional): Interpolation method ('linear' or 'spline')
+            for PDF reconstruction. Defaults to 'linear'.
+
+    Returns:
+        np.ndarray: A 2D float32 array where each row is a reconstructed
+            P(z) corresponding to a row in `int32col`.
+
+    Raises:
+        ValueError: If decoding or interpolation fails for any source and
+            `force_range` is False.
+    """
+    
+    Nsources = int32col.shape[0]
+    PDF = np.zeros((Nsources,len(zvector)),dtype=np.float32)
+    
+    for i in range(Nsources):
+        if np.any(int32col[i] != 0):
+            packet = int32col[i].tobytes()
+            qrecovered = decode_quantiles(packet)
+
+            try:
+                PDF[i] = quantiles_to_density(qrecovered, zvector=zvector, method=method, force_range=force_range)
+            except ValueError as e:
+                raise ValueError(f"Source {i}: {e}") from e
+
+    return PDF
+        
     
 def decode_to_samples(int32col, Nsamples=None, method='linear'):
     """Decodes a column of compressed PDFs into an array of random samples.
