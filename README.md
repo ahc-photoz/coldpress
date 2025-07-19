@@ -24,7 +24,7 @@ The **coldpress** package requires Python 3.8 or newer. The main dependencies ar
 You can install **coldpress** directly from GitHub using `pip`:
 
 ```bash
-pip install git+https://github.com/ahc-photoz/coldpress-project.git
+pip install git+https://github.com/ahc-photoz/coldpress.git
 ```
 
 ## Usage
@@ -60,7 +60,7 @@ We will use a sample of 1,000 redshift PDFs from the Hyper Suprime-Cam Subaru St
 For this example, you can download a small sample file directly from this repository:
 
 ```bash
-wget https://raw.githubusercontent.com/ahc-photoz/coldpress-project/main/examples/hsc_sample.fits
+wget https://raw.githubusercontent.com/ahc-photoz/coldpress/main/examples/hsc_sample.fits
 ```
 
 ### 1. Inspect the File with `coldpress info`
