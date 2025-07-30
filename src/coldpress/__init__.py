@@ -28,7 +28,7 @@ __license__ = "GPLv3"
 __copyright__ = "Copyright 2025, Antonio Hernán Caballero"
 
 from .encode import encode_from_binned, encode_from_samples, encode_from_density, binned_to_quantiles
-from .decode import decode_quantiles, quantiles_to_binned, decode_to_binned 
+from .decode import decode_quantiles, quantiles_to_binned, decode_to_binned, decode_to_density, decode_to_samples
 from .stats import (
     measure_from_quantiles,
     zmode_from_quantiles,

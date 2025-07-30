@@ -207,8 +207,136 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
         return pdf
      
 def quantiles_to_density(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
-    """Implementation pending. Meanwhile calls quantiles_to_binned()"""
-    return quantiles_to_binned(z_quantiles, dz=dz, Nbins=Nbins, z_min=z_min, z_max=z_max, zvector=zvector, method=method, force_range=force_range, renormalize=renormalize)    
+    """Converts quantile locations into a probability density sampled in a grid.
+
+    Reconstructs a gridded PDF P(z) from an array of quantile locations.
+    The output grid can be defined explicitly via `zvector`, or by specifying
+    the number of bins (`Nbins`) or bin width (`dz`) along with an optional
+    range (`z_min`, `z_max`).
+
+    Args:
+        z_quantiles (np.ndarray): A 1D array of monotonic quantile locations.
+        dz (float, optional): The separation between redshif values in the output grid.
+        Nbins (int, optional): The number of elements for the output grid.
+        z_min (float, optional): The minimum redshift for the output grid. If
+            None, inferred from `z_quantiles`.
+        z_max (float, optional): The maximum redshift for the output grid. If
+            None, inferred from `z_quantiles`.
+        zvector (np.ndarray, optional): A 1D array containing the redshift grid. 
+        Takes precedence over other grid arguments.
+        method (str, optional): Interpolation method to reconstruct the
+            cumulative distribution function. Either 'linear' or 'spline'.
+            Defaults to 'linear'.
+        force_range (bool, optional): If True, allows the PDF to be truncated
+            if its range exceeds the specified grid. If False, raises a
+            ValueError. Defaults to False.
+        renormalize (bool, optional): If True, normalize the PDF integral to 1
+            in the truncated range. If False, normalize to 1 in the original range.    
+
+    Returns:
+        np.ndarray or tuple[np.ndarray, np.ndarray]:
+            If `zvector` is provided, returns the probability density P(z)
+            at the redshifts specified by `zvector` (1D `np.ndarray`).
+            Otherwise, returns a tuple containing the generated redshift grid
+            (`z_grid`) and the corresponding P(z).
+
+    Raises:
+        ValueError: If grid arguments are specified incorrectly, if the PDF
+            range exceeds the grid and `force_range` is False, or if an
+            unknown interpolation method is given.
+    """
+    
+    if method == 'spline':
+        from .utils import _monotone_natural_spline
+
+    # --- sanity checks for conflicting arguments ---
+    if force_range and zvector is None and z_min is None and z_max is None:
+        raise ValueError("force_range=True is only meaningful when an explicit range is provided via 'zvector' or 'z_min'/'z_max'.")
+    if zvector is not None and (dz is not None or Nbins is not None):
+        raise ValueError("Cannot specify 'dz' or 'Nbins' when 'zvector' is provided.")
+    if dz is not None and Nbins is not None:
+        raise ValueError("Cannot specify both 'dz' and 'Nbins' simultaneously.")
+        
+    zq = np.asarray(z_quantiles)
+    
+    # Grid creation logic
+    if zvector is not None:
+        z_grid = zvector
+        dz = zvector[1]-zvector[0]
+    else:
+        # Determine range boundaries, inferring from data if not provided
+        range_min = zq[0] if z_min is None else z_min
+        range_max = zq[-1] if z_max is None else z_max
+
+        if Nbins is not None:
+            # Handle case of a delta function to avoid a zero-width range
+            if range_min == range_max:
+                range_min -= 0.0001
+                range_max += 0.0001
+            z_grid = np.linspace(range_min, range_max, Nbins)
+            dz = z_grid[1]-z_grid[0]
+        elif dz is not None:
+            # Snap auto-calculated range to the dz grid if z_min/z_max not provided
+            if z_min is None: range_min = dz * np.floor(zq[0] / dz)
+            if z_max is None: range_max = dz * np.ceil(zq[-1] / dz)
+            z_grid = np.arange(range_min, range_max + dz/2, dz)
+        else:
+            raise ValueError("Must provide one of 'zvector', 'Nbins', or 'dz'.")
+
+    # Perform the range check on the final z_grid
+    eps = 1e-10
+    zmin_q, zmax_q = zq[0]+dz/2+eps, zq[-1]-dz/2-eps
+    zmin_grid, zmax_grid = z_grid[0], z_grid[-1]
+
+    if zmin_q < zmin_grid or zmax_q > zmax_grid:
+        if not force_range:
+            raise ValueError(f"Decoded redshift range [{zmin_q:.3f}, {zmax_q:.3f}] "
+                             f"exceeds the target grid range [{zmin_grid:.3f}, {zmax_grid:.3f}]. "
+                             "Use force_range=True to override.")
+        print(f"Warning: PDF range [{zmin_q:.3f}, {zmax_q:.3f}] truncated to grid range [{zmin_grid:.3f}, {zmax_grid:.3f}].", file=sys.stderr)
+    
+    # Proceed with calculations
+    M = len(zq)
+    Fq = np.linspace(0.0, 1.0, M)
+    dz_eff = z_grid[1] - z_grid[0]
+    delta = dz_eff*0.01
+        
+    if method == 'linear':
+        F_minus = np.interp(z_grid-delta, zq, Fq, left=0.0, right=1.0)
+        F_plus = np.interp(z_grid+delta, zq, Fq, left=0.0, right=1.0)        
+    elif method == 'spline':
+        F_minus = np.zeros(len(z_grid))
+        F_plus = np.zeros(len(z_grid))
+        F_minus[z_grid-delta < zq[0]] = 0.
+        F_minus[z_grid-delta > zq[-1]] = 1.
+        F_plus[z_grid+delta < zq[0]] = 0.
+        F_plus[z_grid+delta > zq[-1]] = 1.
+        minus_inside = ((z_grid-delta) >= zq[0]) & ((z_grid-delta) <= zq[-1])
+        plus_inside = ((z_grid+delta) >= zq[0]) & ((z_grid+delta) <= zq[-1])
+        F_minus_inside = _monotone_natural_spline(z_grid[minus_inside]-delta, zq, Fq)
+        F_plus_inside = _monotone_natural_spline(z_grid[plus_inside]+delta, zq, Fq)
+#         if renormalize:
+#             F_minus_inside /= F_minus_inside[-1]
+#             F_plus_inside /= F_plus_inside[-1]
+        if F_minus_inside.size > 0 and F_minus_inside[-1] > 0:
+            F_minus[minus_inside] = F_minus_inside
+        if F_plus_inside.size > 0 and F_plus_inside[-1] > 0:
+            F_plus[plus_inside] = F_plus_inside
+    else:
+        raise ValueError(f"Unknown interpolation method '{method}'. Choose 'linear' or 'spline'.")
+        
+    pdf = 0.5*(F_plus - F_minus)/delta
+     
+    # Return both the grid and the PDF if the grid was generated internally
+    if zvector is None:
+        return z_grid, pdf
+    else:
+        return pdf
+
+
+
+
+
         
 def quantiles_to_samples(z_quantiles, Nsamples=100, method='linear'):
     """Generates random samples from a PDF defined by its quantiles.
