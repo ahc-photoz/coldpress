@@ -156,12 +156,12 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
             raise ValueError("Must provide one of 'zvector', 'Nbins', or 'dz'.")
 
     # Perform the range check on the final z_grid
-    eps = 1e-10
+    eps = dz/100
     zmin_q, zmax_q = zq[0]+dz/2+eps, zq[-1]-dz/2-eps
     zmin_grid, zmax_grid = z_grid[0], z_grid[-1]
 
     if zmin_q < zmin_grid or zmax_q > zmax_grid:
-        if not force_range:
+        if not force_range:            
             raise ValueError(f"Decoded redshift range [{zmin_q:.3f}, {zmax_q:.3f}] "
                              f"exceeds the target grid range [{zmin_grid:.3f}, {zmax_grid:.3f}]. "
                              "Use force_range=True to override.")
