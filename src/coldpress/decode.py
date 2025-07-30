@@ -285,12 +285,12 @@ def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
 
     return PDF
     
-def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
+def decode_to_density(int32col, zvector, force_range=False, method='linear'):
     """Decodes a column of compressed PDFs into a 2D array with one P(z) per row
 
     This is a batch processing function that iterates over a column of
     compressed byte packets, decodes each one into quantiles, and then
-    converts the quantiles into P(z) on the specified `zvector` grid.
+    converts the quantiles into P(z) sampled on the specified `zvector` grid.
 
     Args:
         int32col (np.ndarray): A 2D numpy array of type int32, where each
