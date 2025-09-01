@@ -249,6 +249,19 @@ def measure_logic(args):
     
     for i in valid_indices:
         quantiles = decode_quantiles(qcold[i].tobytes())
+        
+        # debug code
+        deltas = quantiles[1:]-quantiles[:-1]
+        if np.min(deltas) < 0:
+            print('Quantiles are not in strictly increasing order!')
+            print('packet:')
+            print([int(x) for x in qcold[i].tobytes()])
+            
+            import code
+            code.interact(local=locals())
+        
+        # end debug code
+                
         results = measure_from_quantiles(
             quantiles,
             quantities_to_measure=list(q_to_compute),

@@ -45,7 +45,7 @@ def decode_quantiles(packet):
     new_jumps = np.array(jumps).astype(float)
     insaw = False
     for i in range(1,len(jumps)-1):
-        if not insaw and (jumps[i] < 15) and (abs(jumps[i]-jumps[i-1]) == 1):
+        if not insaw and (jumps[i] < 15) and (abs(jumps[i]-jumps[i-1]) <= 1):
             insaw = True
             init_saw = i-1
             level = jumps[init_saw]
@@ -55,18 +55,28 @@ def decode_quantiles(packet):
             end_saw = i
             if end_saw - init_saw > 3:
                 new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
-    
-    # fix zero-valued jumps by adding a tiny offset that gets compensated in the next non-zero jump    
+ 
+    # remove any remaining zero-valued jumps by taking 1 unit from the next non-zero jump
+    if np.min(new_jumps) == 0:
+        in_strike = False
+        for i in range(0,len(new_jumps)):
+            if not in_strike and (new_jumps[i] == 0):
+                in_strike = True
+                strike_init = i
+                continue
+            if in_strike and (new_jumps[i] > 0): 
+                if new_jumps[i] <= 1: # average from start of strike including this one
+                    new_jumps[strike_init:i+1] = new_jumps[i]/(i+1-strike_init)
+                else: # take one unit from this jump and split it among the previous zeros
+                    new_jumps[strike_init:i] = 1./(i-strike_init) 
+                    new_jumps[i] -= 1
+                in_strike = False
+                           
     if np.min(new_jumps) <= 0:
-        cumulative_offset = 0.
-        for i in range(1,len(new_jumps)):
-            if new_jumps[i] == 0.:
-                new_jumps[i] += 0.05
-                cumulative_offset += 0.05
-            else:
-                new_jumps[i] -= cumulative_offset
-                cumulative_offset = 0.    
-
+        print('Something went wrong. There should be no zero or negative jumps.')
+        import code
+        code.interact(local=locals())
+        
     # check that probability is conserved
     if abs(np.sum(jumps)-np.sum(new_jumps)) > 0.01:
         print('Something went wrong while correcting decoded jump values!')
@@ -77,6 +87,13 @@ def decode_quantiles(packet):
     zs = np.empty(new_jumps.size + 1, dtype=float)
     zs[0] = logq_min
     zs[1:] = logq_min + np.cumsum(new_jumps) * eps
+    
+    ## debug code
+    diff = zs[1:]-zs[:-1]
+    if np.min(diff) <= 0:
+        print('Something went wrong: decoded quantiles should be strictly monotonically increasing.')
+        import code
+        code.interact(local=locals())
     return np.exp(np.array(zs))-1
 
 def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
