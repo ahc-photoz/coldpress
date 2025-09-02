@@ -193,7 +193,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     gaps = np.sort(logq[1:]-logq[:-1])
 
     max_big_gaps = ((packetsize-3)-(Nq-1)) // 2 # maximum number of big gaps that fit in packet for Nq quantiles
-    eps_min2 = gaps[-(max_big_gaps+1)]/254 # all but n=max_big_gaps gaps must fit in 1 byte (and value 255 is reserved)
+    eps_min2 = gaps[-(max_big_gaps+1)]/254 # all but n=max_big_gaps gaps must fit in 1 byte (and value 255 is reserved)            
     eps_min3 = gaps[-1]/(256**2 -1) # the largest gap must fit in a 3-byte big gap
     
     eps_target = np.max([EPSILON_MIN,eps_min2,eps_min3]) # target for epsilon
@@ -293,8 +293,7 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
             if data['format'] == 'PDF_density':    
                 quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'samples':
-                valid = np.isfinite(data['PDF'][i]) # nan values indicate missing samples
-                quantiles = samples_to_quantiles(data['PDF'][i,valid],Nquantiles=Nquantiles)
+                quantiles = samples_to_quantiles(data['PDF'][i],Nquantiles=Nquantiles)
 
             try:
                 payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
@@ -307,11 +306,10 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
                     packet = lastgood
                     break
                 else:
-                    if Nquantiles < 10:
-                        print('Error: the quantile counts have decreased too much!')
-                        import code
-                        code.interact(local=locals())
                     Nquantiles -= 2
+                    if Nquantiles < packetsize/3:
+                        print(f"Error: The PDF for source #{i} can't be encoded!")
+                        sys.exit(1)
                     continue    
 
             if payload_length < packetsize-3:

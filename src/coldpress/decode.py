@@ -55,7 +55,7 @@ def decode_quantiles(packet):
             end_saw = i
             if end_saw - init_saw > 3:
                 new_jumps[init_saw:end_saw] = np.mean(jumps[init_saw:end_saw])
- 
+        
     # remove any remaining zero-valued jumps by taking 1 unit from the next non-zero jump
     if np.min(new_jumps) == 0:
         in_strike = False
