@@ -293,7 +293,8 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
             if data['format'] == 'PDF_density':    
                 quantiles = density_to_quantiles(data['zvector'],data['PDF'][i],Nquantiles=Nquantiles)
             if data['format'] == 'samples':
-                quantiles = samples_to_quantiles(data['PDF'][i],Nquantiles=Nquantiles)
+                valid = np.isfinite(data['PDF'][i])
+                quantiles = samples_to_quantiles(data['PDF'][i][valid],Nquantiles=Nquantiles)
 
             try:
                 payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
@@ -308,8 +309,9 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=None, validat
                 else:
                     Nquantiles -= 2
                     if Nquantiles < packetsize/3:
-                        print(f"Error: The PDF for source #{i} can't be encoded!")
-                        sys.exit(1)
+                        print(f"WARNING: The PDF for source #{i} could not be encoded!")
+                        packet = bytearray(packetsize) # returns all zeros
+                        break
                     continue    
 
             if payload_length < packetsize-3:
@@ -419,10 +421,11 @@ def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None
     # count valid samples per source
     n_valid = np.sum(valid_samples, axis=1)
 
-    # Reject sources with fewer valid samples than quantiles requested or all samples with same value
+    # Reject sources with fewer valid samples than quantiles requested, or all samples with same value,
+    # or fewer than 90% valid samples
     zmin = np.nanmin(samples, axis=1)
     zmax = np.nanmax(samples, axis=1)
-    valid_source = (n_valid > ini_quantiles) & (zmax-zmin > 0)
+    valid_source = (n_valid > ini_quantiles) & (zmax-zmin > 0) & (n_valid > 0.9*samples.shape[1])
     n_valid_sources = len(valid_source[valid_source])
         
     # create array to contain clean samples
