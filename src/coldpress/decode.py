@@ -349,12 +349,7 @@ def quantiles_to_density(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=Non
         return z_grid, pdf
     else:
         return pdf
-
-
-
-
-
-        
+       
 def quantiles_to_samples(z_quantiles, Nsamples=100, method='linear'):
     """Generates random samples from a PDF defined by its quantiles.
 
@@ -470,8 +465,7 @@ def decode_to_density(int32col, zvector, force_range=False, method='linear'):
                 raise ValueError(f"Source {i}: {e}") from e
 
     return PDF
-        
-    
+            
 def decode_to_samples(int32col, Nsamples=None, method='linear'):
     """Decodes a column of compressed PDFs into an array of random samples.
 
