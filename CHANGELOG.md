@@ -1,6 +1,19 @@
 # Changelog
 
 
+## [1.0.0] - 2025-09-02
+
+### Added
+
+- Implemented decode\_to\_density()
+
+### Fixed
+
+- Added encode\_from\_density() to API
+- Fixed insufficient tolerance in range check
+- Fixed error in decode\_quantiles() that resulted in unsorted quantiles
+- Prevent \_batch\_encode() from crashing on weird, un-encodable PDFs. Rejects them instead.
+- encode\_from\_samples() excludes sources if more than 10% of their samples are NaN.
 
 ## [1.0.0-beta] - 2025-07-19
 
