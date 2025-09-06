@@ -18,6 +18,74 @@ DEFAULT_ID_COL = 'ID'
 DEFAULT_ENCODED_COL = 'coldpress_PDF'
 DEFAULT_DECODED_COL = 'PDF_decoded'
 
+def find_column_name(columns, name):
+    """
+    Finds the actual name of a column in a FITS table, case-insensitively.
+
+    Args:
+        columns (astropy.io.fits.column.ColDefs): The column definitions object.
+        name (str): The case-insensitive name to find.
+
+    Returns:
+        str or None: The actual column name if found, otherwise None.
+    """
+    if name is None:
+        return None
+    names_upper = [c.name.upper() for c in columns]
+    name_upper = name.upper()
+    try:
+        idx = names_upper.index(name_upper)
+        return columns[idx].name
+    except ValueError:
+        return None
+
+
+def fix_encoded_column(hdu, colname):
+    """
+    Check if the column colname has variable length and if so recreate the entire HDU
+    with a fixed length version of the column.
+    """
+    actual_colname = find_column_name(hdu.columns, colname)
+    if actual_colname is None:
+        print(f"Error: column {colname} not found in input table. List of columns found:")
+        print(hdu.columns.names)
+        sys.exit(1)
+        
+    # astropy treats variable-length array columns as objects, not 2D arrays
+    if hdu.data[actual_colname].dtype == 'object':
+        
+        # Create the corrected NumPy array from the problematic column
+        qcold = hdu.data[actual_colname]
+        lengths = np.array([len(x) for x in qcold])
+        maxlength = np.max(lengths)
+        if maxlength == 0:
+            print(f"Error: All rows contain NULL values in column '{actual_colname}'.")
+            sys.exit(1)
+    
+        qcold_fixed = np.zeros((lengths.shape[0],maxlength),dtype='>i4') # ensure integers are big-endian
+        valid_indices = np.where(lengths == maxlength)[0]
+        for i in valid_indices:
+            qcold_fixed[i] = qcold[i]
+                       
+        # Create a new, fixed-width FITS Column object
+        new_format = f'{qcold_fixed.shape[1]}J'
+        new_column = fits.Column(name=actual_colname, format=new_format, array=qcold_fixed)
+        
+        print(f"Warning: column '{actual_colname}' converted from variable-length to fixed-length format.")
+
+        # Replace the old column definition in the list of columns
+        original_columns = list(hdu.columns)
+        col_idx = [i for i, col in enumerate(original_columns) if col.name == actual_colname][0]
+        original_columns[col_idx] = new_column
+        
+        # Return a new HDU built from the corrected column list
+        return fits.BinTableHDU.from_columns(original_columns, header=hdu.header)
+    
+    # If no fix is needed, return the original HDU
+    return hdu 
+ 
+ 
+ 
 # --- Logic for the 'info' command ---
 def info_logic(args):
     """Displays metadata about a FITS file.
@@ -104,20 +172,28 @@ def encode_logic(args):
         
         if args.samples is not None:
             orig_column = args.samples
-            history = f'PDFs from samples in column {args.samples} cold-pressed as {args.out_encoded}'
+            actual_orig_column = find_column_name(h[1].columns, orig_column)
+            if actual_orig_column is None:
+                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
+                sys.exit(1)
+            history = f'PDFs from samples in column {actual_orig_column} cold-pressed as {args.out_encoded}'
             print(f"Generating quantiles from random redshift samples and compressing into {args.length}-byte packets...")
             if (args.zmin is not None) and (args.zmax) is not None:
                 clip_range = [args.zmin, args.zmax]
             else:
                 clip_range = None    
-            samples = h[1].data[args.samples]
+            samples = h[1].data[actual_orig_column]
             coldpress_PDF = encode_from_samples(samples, packetsize=args.length, ini_quantiles=args.length-8, 
                                                 validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction, 
                                                 clip_range=clip_range) 
         elif args.binned is not None:
             orig_column = args.binned
-            history = f'Binned PDFs in column {args.binned} cold-pressed as {args.out_encoded}'
-            PDF = h[1].data[args.binned]
+            actual_orig_column = find_column_name(h[1].columns, orig_column)
+            if actual_orig_column is None:
+                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
+                sys.exit(1)
+            history = f'Binned PDFs in column {actual_orig_column} cold-pressed as {args.out_encoded}'
+            PDF = h[1].data[actual_orig_column]
             zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
             cratio = PDF.shape[1]*PDF.itemsize/args.length
             print(f"Compressing binned PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
@@ -125,8 +201,12 @@ def encode_logic(args):
                                                 validate=args.validate, tolerance=args.tolerance)
         elif args.density is not None:
             orig_column = args.density
-            history = f'Probability density in column {args.density} cold-pressed as {args.out_encoded}'
-            PDF = h[1].data[args.density]
+            actual_orig_column = find_column_name(h[1].columns, orig_column)
+            if actual_orig_column is None:
+                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
+                sys.exit(1)
+            history = f'Probability density in column {actual_orig_column} cold-pressed as {args.out_encoded}'
+            PDF = h[1].data[actual_orig_column]
             zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
             cratio = PDF.shape[1]*PDF.itemsize/args.length
             print(f"Compressing density PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
@@ -137,13 +217,13 @@ def encode_logic(args):
         nints = args.length // 4
         new_col = fits.Column(name=args.out_encoded, format=f'{nints}J', array=coldpress_PDF)
 
-        final_cols = [c for c in orig_cols if c.name != args.out_encoded]
+        final_cols = [c for c in orig_cols if c.name.upper() != args.out_encoded.upper()]
               
         if args.keep_orig:
-            print(f"Including column '{orig_column}' in output FITS table.")
+            print(f"Including column '{actual_orig_column}' in output FITS table.")
         else:
-            final_cols = [c for c in final_cols if c.name != orig_column]
-            print(f"Excluding column '{orig_column}' from output FITS table.")
+            final_cols = [c for c in final_cols if c.name.upper() != actual_orig_column.upper()]
+            print(f"Excluding column '{actual_orig_column}' from output FITS table.")
 
         final_cols.append(new_col)
         new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
@@ -179,27 +259,31 @@ def decode_logic(args):
     print(f"Opening input file: {args.input}")
 
     with fits.open(args.input) as h:
-        header = h[1].header
-        coldpress_PDF = h[1].data[args.encoded]
-        orig_cols = list(h[1].columns)
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
+        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
+
+        header = hdu.header
+        orig_cols = list(hdu.columns)
 
         zvector = np.arange(args.zmin, args.zmax + args.zstep/2, args.zstep)
         zvsize = len(zvector)
 
         print(f"Decompressing PDFs using {args.method} interpolation of the quantiles...")
         try:
-            decoded_PDF = decode_to_binned(coldpress_PDF, zvector, force_range=args.force_range, method=args.method)
+            decoded_PDF = decode_to_binned(qcold, zvector, force_range=args.force_range, method=args.method)
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             print("Hint: Use the --force-range flag to proceed with truncation at your own risk.", file=sys.stderr)
             sys.exit(1)
 
         new_col = fits.Column(name=args.out_binned, format=f'{zvsize}E', array=decoded_PDF)
-        final_cols = [c for c in orig_cols if c.name != args.out_binned]
+        final_cols = [c for c in orig_cols if c.name.upper() != args.out_binned.upper()]
         final_cols.append(new_col)
         new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
     
-    new_hdu.header.add_history(f'PDFs in column {args.encoded} extracted as {args.out_binned}')
+    new_hdu.header.add_history(f'PDFs in column {actual_encoded_name} extracted as {args.out_binned}')
     print(f"Writing decompressed data to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
@@ -226,11 +310,14 @@ def measure_logic(args):
 
     print(f"Opening input file: {args.input}")
     with fits.open(args.input) as h:
-        data = h[1].data
-        header = h[1].header
-        original_columns = data.columns
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
+        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
 
-    qcold = data[args.encoded]
+        header = hdu.header
+        orig_cols = list(hdu.columns)
+
     Nsources = qcold.shape[0]
     
     q_to_compute = {q.upper() for q in args.quantities}
@@ -249,19 +336,7 @@ def measure_logic(args):
     
     for i in valid_indices:
         quantiles = decode_quantiles(qcold[i].tobytes())
-        
-        # debug code
-        deltas = quantiles[1:]-quantiles[:-1]
-        if np.min(deltas) < 0:
-            print('Quantiles are not in strictly increasing order!')
-            print('packet:')
-            print([int(x) for x in qcold[i].tobytes()])
-            
-            import code
-            code.interact(local=locals())
-        
-        # end debug code
-                
+                        
         results = measure_from_quantiles(
             quantiles,
             quantities_to_measure=list(q_to_compute),
@@ -271,8 +346,8 @@ def measure_logic(args):
             d[q_name][i] = value
 
     final_cols = []
-    for col in original_columns:
-        if col.name not in q_to_compute:
+    for col in orig_cols:
+        if col.name.upper() not in q_to_compute:
             final_cols.append(col)
 
     for name, array in d.items():
@@ -280,7 +355,7 @@ def measure_logic(args):
         final_cols.append(fits.Column(name=name, format=format_str, array=array))
 
     new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    new_hdu.header['HISTORY'] = f'Computed point estimates from column: {args.encoded}'
+    new_hdu.header['HISTORY'] = f'Computed point estimates from column: {actual_encoded_name}'
     print(f"Writing point estimates to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
@@ -311,23 +386,31 @@ def plot_logic(args):
             - quantities (list, optional): List of FITS columns to
               overplot as vertical lines.
     """
-    print(f"Opening input file: {args.input}")
+    try:
+        import matplotlib
+    except ImportError:
+        print("Error: matplotlib is required for the plot command.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Opening input file: {args.input}")         
     with fits.open(args.input) as h:
-        try:
-            import matplotlib
-        except ImportError:
-            print("Error: matplotlib is required for the plot command.", file=sys.stderr)
-            sys.exit(1)
-        data = h[1].data
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
+        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
 
-    qcold = data[args.encoded]
-
+        data = hdu.data
+        header = hdu.header
+        orig_cols = list(hdu.columns)
+    
     if args.quantities:
         all_cols_upper = {c.upper() for c in data.columns.names}
         for q_col in args.quantities:
             if q_col.upper() not in all_cols_upper:
                 print(f"Error: Quantity column '{q_col}' not found in FITS table.", file=sys.stderr)
                 sys.exit(1)
+    
+    actual_idcol = find_column_name(data.columns, args.idcol)
 
     # Determine which rows to plot based on the mutually exclusive arguments
     if args.plot_all:
@@ -338,12 +421,12 @@ def plot_logic(args):
             print(f"Warning: Requested first {args.first} PDFs, but file only contains {len(data)}. Plotting all sources.")
         indices_to_plot = range(num_to_plot)
     else:  # This handles the 'id' case, which is the default if not the others
-        if args.idcol not in data.columns.names:
+        if actual_idcol is None:
             print(f"Error: --id specified, but no '{args.idcol}' column found in {args.input}", file=sys.stderr)
             sys.exit(1)
         
         source_ids = list(args.id)
-        id_column_as_str = data[args.idcol].astype(str)
+        id_column_as_str = data[actual_idcol].astype(str)
         source_ids_as_str = np.asarray(source_ids, dtype=str)
         indices_to_plot = np.where(np.isin(id_column_as_str, source_ids_as_str))[0]
 
@@ -357,7 +440,7 @@ def plot_logic(args):
 
     for i in indices_to_plot:
         # Corrected logic for determining the source ID string
-        source_id_val = data[args.idcol][i] if args.idcol is not None and args.idcol in data.columns.names else f"row_{i}"
+        source_id_val = data[actual_idcol][i] if actual_idcol is not None else f"row_{i}"
         
         if not np.any(qcold[i] != 0):
             print(f"Skipping source {source_id_val}: No valid PDF data.")
@@ -368,7 +451,7 @@ def plot_logic(args):
         markers_to_plot = {}
         if args.quantities:
             for q_col in args.quantities:
-                actual_col_name = next((c for c in data.columns.names if c.upper() == q_col.upper()), None)
+                actual_col_name = next((c.name for c in data.columns if c.name.upper() == q_col.upper()), None)
                 if actual_col_name:
                     markers_to_plot[q_col] = data[actual_col_name][i]
 
@@ -381,7 +464,7 @@ def plot_logic(args):
                 quantiles,
                 output_filename=output_filename,
                 interactive=args.interactive,
-                source_id=source_id_val,
+                source_id=str(source_id_val),
                 method=args.method,
                 markers=markers_to_plot
             )
@@ -416,26 +499,37 @@ def check_logic(args):
         data = h[1].data
         header = h[1].header
         original_columns = data.columns
+        
+        actual_idcol = None
         if args.list:
-            ID = data[args.idcol]
+            actual_idcol = find_column_name(data.columns, args.idcol)
+            if actual_idcol is None:
+                print(f"Error: ID column '{args.idcol}' not found.", file=sys.stderr)
+                sys.exit(1)
+            ID = data[actual_idcol]
         
         if args.binned is None:
-            samples = data[args.samples]
+            actual_samples_col = find_column_name(data.columns, args.samples)
+            if actual_samples_col is None:
+                print(f"Error: Samples column '{args.samples}' not found.", file=sys.stderr)
+                sys.exit(1)
+            samples = data[actual_samples_col]
             invalid = (np.sum(~np.isfinite(samples),axis=1) > 0)
             v = ~invalid
             unresolved = (np.max(samples[v],axis=1)-np.min(samples[v],axis=1) == 0)
+            print(f'Column {actual_samples_col} contains {samples.shape[0]} sampled PDFs, each containing {samples.shape[1]} random redshift samples.')
         else:
-            PDF = data[args.binned]
+            actual_binned_col = find_column_name(data.columns, args.binned)
+            if actual_binned_col is None:
+                print(f"Error: Binned PDF column '{args.binned}' not found.", file=sys.stderr)
+                sys.exit(1)
+            PDF = data[actual_binned_col]
             invalid = (np.sum(~np.isfinite(PDF),axis=1) > 0) | (np.nanmin(PDF,axis=1) < 0) | (np.nanmax(PDF,axis=1) == 0.)
             v = ~invalid
             unresolved = (np.sum(PDF[v],axis=1)-np.max(PDF[v],axis=1) == 0)
             threshold = args.truncation_threshold * np.max(PDF[v],axis=1)
             truncated = ((PDF[v,0] > threshold) | (PDF[v,-1] > threshold))
-    
-    if args.binned is None:
-        print(f'Column {args.samples} contains {samples.shape[0]} sampled PDFs, each containing {samples.shape[1]} random redshift samples.')
-    else:    
-        print(f'Column {args.binned} contains {PDF.shape[0]} binned PDFs, each containing {PDF.shape[1]} redshift bins.')
+            print(f'Column {actual_binned_col} contains {PDF.shape[0]} binned PDFs, each containing {PDF.shape[1]} redshift bins.')
     
     print(f"{np.sum(invalid)} PDFs have been flagged as 'invalid'")
     print(f"{np.sum(unresolved)} PDFs have been flagged as 'unresolved'")
@@ -469,9 +563,9 @@ def check_logic(args):
             d['Z_FLAGS'][d['PDF_truncated']] += 4
 
         final_cols = []
-        new_col_names = d.keys()
+        new_col_names = {name.upper() for name in d.keys()}
         for col in original_columns:
-            if col.name not in new_col_names:
+            if col.name.upper() not in new_col_names:
                 final_cols.append(col)
 
         for name, array in d.items():
@@ -481,7 +575,7 @@ def check_logic(args):
             final_cols.append(fits.Column(name=name, format=format_str, array=array))
 
         new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-        new_hdu.header['HISTORY'] = f'Added flags columns indicating issues in the PDFs: {list(new_col_names)}'
+        new_hdu.header['HISTORY'] = f'Added flags columns indicating issues in the PDFs: {list(d.keys())}'
         print(f"Writing point estimates to: {args.output}")
         new_hdu.writeto(args.output, overwrite=True)
         print('Done.')
@@ -541,7 +635,7 @@ def main():
     parser_measure.add_argument('output', type=str, nargs='?', help='Name of output FITS table containing point estimates measured on the PDFs.')
     parser_measure.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of column containing cold-pressed PDFs.')
     choices_list = sorted(list(ALL_QUANTITIES) + ['ALL'])
-    parser_measure.add_argument('--quantities', type=str, nargs='+', default=['all'], choices=choices_list, metavar='QUANTITY', help='List of quantities to measure from the PDFs (default: all).')
+    parser_measure.add_argument('--quantities', type=str.upper, nargs='+', default=['ALL'], choices=choices_list, metavar='QUANTITY', help='List of quantities to measure from the PDFs (default: all).')
     parser_measure.add_argument('--odds-window', type=float, default=0.03, help='Half-width of the integration window for odds calculation.')
     parser_measure.add_argument('--list-quantities', action='store_true', help='List all available quantities and their descriptions.')
                               
@@ -555,7 +649,7 @@ def main():
     plot_group.add_argument('--first', metavar='N', type=int, help='plot PDFs for the first N sources in the file.')
     plot_group.add_argument('--plot-all', action='store_true', dest='plot_all', help='Plot PDFs for all the sources in the file.')
     parser_plot.add_argument('--interactive', action='store_true', help='Display plots in an interactive window instead of saving to file.')
-    parser_plot.add_argument('--idcol', type=str, nargs='?', help='Name of input column containing source IDs.')
+    parser_plot.add_argument('--idcol', type=str, nargs='?', default=DEFAULT_ID_COL, help='Name of input column containing source IDs.')
     parser_plot.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of input column containing cold-pressed PDFs.')
     parser_plot.add_argument('--outdir', type=str, default='.', help='Output directory for plot files.')
     parser_plot.add_argument('--format', type=str, default='png', help='Output format for plots.')
