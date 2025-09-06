@@ -18,6 +18,51 @@ DEFAULT_ID_COL = 'ID'
 DEFAULT_ENCODED_COL = 'coldpress_PDF'
 DEFAULT_DECODED_COL = 'PDF_decoded'
 
+def fix_encoded_column(hdu, colname):
+    """
+    Check if the column colname has variable length and if so recreate the entire HDU
+    with a fixed length version of the column.
+    """
+    if colname not in hdu.columns.names:
+        print(f"Error: column {colname} not found in input table. List of columns found:")
+        print(hdu.columns.names)
+        sys.exit(1)
+        
+    # astropy treats variable-length array columns as objects, not 2D arrays
+    if hdu.data[colname].dtype == 'object':
+        
+        # Create the corrected NumPy array from the problematic column
+        qcold = hdu.data[colname]
+        lengths = np.array([len(x) for x in qcold])
+        maxlength = np.max(lengths)
+        if maxlength == 0:
+            print(f"Error: All rows contain NULL values in column '{colname}'.")
+            sys.exit(1)
+    
+        qcold_fixed = np.zeros((lengths.shape[0],maxlength),dtype='>i4') # ensure integers are big-endian
+        valid_indices = np.where(lengths == maxlength)[0]
+        for i in valid_indices:
+            qcold_fixed[i] = qcold[i]
+                       
+        # Create a new, fixed-width FITS Column object
+        new_format = f'{qcold_fixed.shape[1]}J'
+        new_column = fits.Column(name=colname, format=new_format, array=qcold_fixed)
+        
+        print(f"Warning: column '{colname}' converted from variable-length to fixed-length format.")
+
+        # Replace the old column definition in the list of columns
+        original_columns = list(hdu.columns)
+        col_idx = [i for i, col in enumerate(original_columns) if col.name == colname][0]
+        original_columns[col_idx] = new_column
+        
+        # Return a new HDU built from the corrected column list
+        return fits.BinTableHDU.from_columns(original_columns, header=hdu.header)
+    
+    # If no fix is needed, return the original HDU
+    return hdu 
+ 
+ 
+ 
 # --- Logic for the 'info' command ---
 def info_logic(args):
     """Displays metadata about a FITS file.
@@ -179,16 +224,19 @@ def decode_logic(args):
     print(f"Opening input file: {args.input}")
 
     with fits.open(args.input) as h:
-        header = h[1].header
-        coldpress_PDF = h[1].data[args.encoded]
-        orig_cols = list(h[1].columns)
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        qcold = hdu.data[args.encoded].astype('>i4') #ensure array is big-endian
+
+        header = hdu.header
+        orig_cols = list(hdu.columns)
 
         zvector = np.arange(args.zmin, args.zmax + args.zstep/2, args.zstep)
         zvsize = len(zvector)
 
         print(f"Decompressing PDFs using {args.method} interpolation of the quantiles...")
         try:
-            decoded_PDF = decode_to_binned(coldpress_PDF, zvector, force_range=args.force_range, method=args.method)
+            decoded_PDF = decode_to_binned(qcold, zvector, force_range=args.force_range, method=args.method)
         except ValueError as e:
             print(f"Error: {e}", file=sys.stderr)
             print("Hint: Use the --force-range flag to proceed with truncation at your own risk.", file=sys.stderr)
@@ -226,11 +274,13 @@ def measure_logic(args):
 
     print(f"Opening input file: {args.input}")
     with fits.open(args.input) as h:
-        data = h[1].data
-        header = h[1].header
-        original_columns = data.columns
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        qcold = hdu.data[args.encoded].astype('>i4') #ensure array is big-endian
 
-    qcold = data[args.encoded]
+        header = hdu.header
+        orig_cols = list(hdu.columns)
+
     Nsources = qcold.shape[0]
     
     q_to_compute = {q.upper() for q in args.quantities}
@@ -249,19 +299,7 @@ def measure_logic(args):
     
     for i in valid_indices:
         quantiles = decode_quantiles(qcold[i].tobytes())
-        
-        # debug code
-        deltas = quantiles[1:]-quantiles[:-1]
-        if np.min(deltas) < 0:
-            print('Quantiles are not in strictly increasing order!')
-            print('packet:')
-            print([int(x) for x in qcold[i].tobytes()])
-            
-            import code
-            code.interact(local=locals())
-        
-        # end debug code
-                
+                        
         results = measure_from_quantiles(
             quantiles,
             quantities_to_measure=list(q_to_compute),
@@ -271,7 +309,7 @@ def measure_logic(args):
             d[q_name][i] = value
 
     final_cols = []
-    for col in original_columns:
+    for col in orig_cols:
         if col.name not in q_to_compute:
             final_cols.append(col)
 
@@ -311,17 +349,22 @@ def plot_logic(args):
             - quantities (list, optional): List of FITS columns to
               overplot as vertical lines.
     """
-    print(f"Opening input file: {args.input}")
+    try:
+        import matplotlib
+    except ImportError:
+        print("Error: matplotlib is required for the plot command.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Opening input file: {args.input}")         
     with fits.open(args.input) as h:
-        try:
-            import matplotlib
-        except ImportError:
-            print("Error: matplotlib is required for the plot command.", file=sys.stderr)
-            sys.exit(1)
-        data = h[1].data
+        # Fix the HDU in memory if necessary
+        hdu = fix_encoded_column(h[1], args.encoded)
+        qcold = hdu.data[args.encoded].astype('>i4') #ensure array is big-endian
 
-    qcold = data[args.encoded]
-
+        data = hdu.data
+        header = hdu.header
+        orig_cols = list(hdu.columns)
+    
     if args.quantities:
         all_cols_upper = {c.upper() for c in data.columns.names}
         for q_col in args.quantities:
