@@ -1,17 +1,23 @@
 # Changelog
 
+## [1.0.1] - 2025-09-06
+
+### Fixed
+
+- Make FITS column name handling case insensitive in all CLI commands.
+- Fix decoding error afecting CLI commands `decode`, `measure`, and `plot`  if the encoded PDF column has variable-length format.
 
 ## [1.0.0] - 2025-09-02
 
 ### Added
 
-- Implemented decode\_to\_density()
+- Implemented decode\_to\_density().
 
 ### Fixed
 
-- Added encode\_from\_density() to API
-- Fixed insufficient tolerance in range check
-- Fixed error in decode\_quantiles() that resulted in unsorted quantiles
+- Added encode\_from\_density() to API.
+- Fixed insufficient tolerance in range check.
+- Fixed error in decode\_quantiles() that resulted in unsorted quantiles.
 - Prevent \_batch\_encode() from crashing on weird, un-encodable PDFs. Rejects them instead.
 - encode\_from\_samples() excludes sources if more than 10% of their samples are NaN.
 
