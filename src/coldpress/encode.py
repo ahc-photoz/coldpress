@@ -421,11 +421,11 @@ def encode_from_samples(samples, ini_quantiles=71, packetsize=80, tolerance=None
     # count valid samples per source
     n_valid = np.sum(valid_samples, axis=1)
 
-    # Reject sources with fewer valid samples than quantiles requested, or all samples with same value,
-    # or fewer than 90% valid samples
+    # Reject sources with fewer valid samples than quantiles requested, or all samples with same value
+    
     zmin = np.nanmin(samples, axis=1)
     zmax = np.nanmax(samples, axis=1)
-    valid_source = (n_valid > ini_quantiles) & (zmax-zmin > 0) & (n_valid > 0.9*samples.shape[1])
+    valid_source = (n_valid > ini_quantiles) & (zmax-zmin > 0)
     n_valid_sources = len(valid_source[valid_source])
         
     # create array to contain clean samples
