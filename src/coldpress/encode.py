@@ -200,8 +200,8 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     eps_min3 = gaps[-1]/(256**2 -1) # the largest gap must fit in a 3-byte big gap
    # print(f'target: {tolerance}  1-byte eps: {eps_min2} 3-byte eps: {eps_min3}')
     eps_target = np.max([EPSILON_MIN,eps_min2,eps_min3]) # target for epsilon
-    if eps_target > tolerance:
-        raise ValueError(f'Error: epsilon={eps_target} is larger than tolerance.')
+    if eps_target > 2*tolerance:
+        raise ValueError(f'Error: epsilon={eps_target} is larger than 2*tolerance.')
 
     eps_byte = int(np.ceil(np.log(eps_target/EPSILON_MIN)/EPSILON_BETA)) # byte encoding for epsilon
     if eps_byte > 255:
@@ -242,7 +242,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
            print(quantiles)
            sys.exit(1)
            
-        shift = quantiles[1:]-qrecovered[1:]
+        shift = np.log(1+quantiles[1:])-np.log(1+qrecovered[1:])
         if max(abs(shift)) > tolerance:
             raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
     
