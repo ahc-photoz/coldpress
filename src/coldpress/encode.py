@@ -289,12 +289,10 @@ def _optimize_quantile_count(data, packetsize=80, min_big_jumps=0, max_big_jumps
             eps_min3 = gaps[-1]/(256**2 -1) # the largest gap must fit in a 3-byte big gap
             eps_target = np.max([EPSILON_MIN,eps_min2,eps_min3]) # target for epsilon
             if (eps_target > eps_max): # epsilon is too high, do not keep adding quantiles
-                if (j == 0):
-                    print(f'Warning: source {i} has no suitable solutions for {qcount_min}-{qcount_max} quantiles. Will try later with fewer quantiles')
-                else:    
+                if (j > 0):
                     break
             
-            if (j > 0) & (eps_target/gaps[0] < d_threshold): # a gap is too narrow, do not keep adding quantiles
+            if (j > 0) & (eps_target < d_threshold*gaps[0]): # a gap is too narrow, do not keep adding quantiles
                 break
                         
             scores[i,j] = -np.log(eps_target)*Nq
@@ -373,7 +371,7 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, valid
                     sys.exit(1)          
                 else:
                     Nquantiles -= 2
-                    print(f'Retrying source {i} with {Nquantiles} quantiles.')
+                   # print(f'Retrying source {i} with {Nquantiles} quantiles.')
                     if Nquantiles < packetsize/3:
                         print(f"WARNING: The PDF for source #{i} could not be encoded!")
                         if data['format'] == 'samples':
