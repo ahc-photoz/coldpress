@@ -3,7 +3,7 @@ import struct
 import sys
 from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA
 
-def decode_quantiles(packet):
+def decode_quantiles(packet, units='redshift'):
     """Decodes a byte packet back into an array of quantiles.
 
     This function unpacks a compressed byte representation created by
@@ -83,19 +83,20 @@ def decode_quantiles(packet):
         import code
         code.interact(local=locals())      
                 
-    # convert jumps to quantile redshifts         
+    # convert jumps to quantile of zeta        
     zs = np.empty(new_jumps.size + 1, dtype=float)
     zs[0] = logq_min
     zs[1:] = logq_min + np.cumsum(new_jumps) * eps
-    
-    ## debug code
-    diff = zs[1:]-zs[:-1]
-    if np.min(diff) <= 0:
-        print('Something went wrong: decoded quantiles should be strictly monotonically increasing.')
-        import code
-        code.interact(local=locals())
-    return np.exp(np.array(zs))-1
 
+    # return quantiles in the requested units
+    if units == 'zeta':
+        return zs
+    elif units == 'redshift':
+        return np.exp(zs)-1          
+    else:
+        print("Error: unknown units: {units}. Valid values: 'redshift','zeta'")
+        sys.exit(1)
+        
 def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
     """Converts quantile locations into a binned probability density function (PDF).
 

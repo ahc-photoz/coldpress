@@ -140,7 +140,7 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=1
     return quantile_redshifts    
 
 
-def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
+def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001, units='redshift'):
     """Encodes an array of quantiles into a compact byte packet.
 
     Compresses an array of quantile locations into a fixed-size byte array.
@@ -181,8 +181,14 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     if Nq > packetsize-2:
          raise ValueError(f'Error: cannot fit {Nq} quantiles in an {packetsize}-bytes packet')
 
-    logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
-    
+    if units == 'redshift':
+        logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
+    elif units == 'zeta':
+        logz = quantiles # input quantiles are already in zeta units
+    else:
+        print("Error: unknown units: {units}. Valid values: 'redshift','zeta'")
+        sys.exit(1)
+            
     # encode the first quantile as uint16
     xmin_int = int(np.floor((logq[0]+NEGATIVE_Z_OFFSET)/LOG_DZ))
 
@@ -232,7 +238,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     packet[3:3+L] = payload
 
     if validate: 
-        qrecovered = decode_quantiles(packet)
+        qrecovered = decode_quantiles(packet,units='zeta')
         if len(qrecovered) != len(quantiles):
            print('Error: packet decodes to wrong number of quantiles!')
            print('packet: ',[int(x) for x in packet])
@@ -242,7 +248,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
            print(quantiles)
            sys.exit(1)
            
-        shift = np.log(1+quantiles[1:])-np.log(1+qrecovered[1:])
+        shift = quantiles[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
             raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
     
