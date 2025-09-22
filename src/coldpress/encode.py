@@ -221,16 +221,23 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
             payload.append(255)
             payload += struct.pack('>H', d)
         prev = prev + d * eps
+        
+    # fix last jump if it is a zero-sized jump (only happens in very weird PDFs)
+    if d == 0:
+        payload[-1] = 1    
 
+    # check length of payload
     L = len(payload)
     if L > packetsize-3: 
         raise ValueError(f'Error: payload of length {L} does not fit in packet of size {packetsize}.')
 
+    # create packet
     packet = bytearray(packetsize)
     packet[0] = eps_byte
     packet[1:3] = struct.pack('<H', xmin_int)            
     packet[3:3+L] = payload
 
+    # check that packet decompresses correctly
     if validate: 
         qrecovered = decode_quantiles(packet)
         if len(qrecovered) != len(quantiles):
