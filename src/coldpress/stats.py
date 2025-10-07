@@ -136,9 +136,7 @@ def zmode_from_quantiles(quantiles, hpdci68=None):
     # find quantiles inside HPDCI68
     inside = np.where((quantiles >= hpdci68[0]) & (quantiles <= hpdci68[1]))[0]
     if len(inside) == 0:
-        print('No quantiles inside HPDCI68??')
-        import code
-        code.interact(local=locals())
+        raise ValueError('Something were really wrong. No quantiles inside HPDCI68. Please report this.')
     minq = np.max((np.min(inside)-1,0))
     maxq = np.min((np.max(inside)+2,len(quantiles)))    
     

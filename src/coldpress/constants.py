@@ -17,5 +17,11 @@ EPSILON_BETA = 0.0361
 # Minimum redshift for first quantile that can be encoded
 Q0_ZMIN = exp(-NEGATIVE_Z_OFFSET) - 1
 
+# Minimum zeta for first quantile that can be encoded
+Q0_ZETAMIN = -NEGATIVE_Z_OFFSET
+
 # Maximum redshift for first quantile that can be encoded
 Q0_ZMAX = exp(LOG_DZ*(256**2-1) - NEGATIVE_Z_OFFSET) - 1
+
+# Maximum zeta for first quantile that can be encoded
+Q0_ZETAMAX = LOG_DZ*(256**2-1) - NEGATIVE_Z_OFFSET
