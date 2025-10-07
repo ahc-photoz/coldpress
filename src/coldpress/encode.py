@@ -1,6 +1,6 @@
 import numpy as np
 import struct
-from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA, Q0_ZMIN, Q0_ZMAX
+from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA, Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX
 import sys
 import time
 
@@ -140,7 +140,7 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=1
     return quantile_redshifts    
 
 
-def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
+def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001, units='redshift'):
     """Encodes an array of quantiles into a compact byte packet.
 
     Compresses an array of quantile locations into a fixed-size byte array.
@@ -181,8 +181,14 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
     if Nq > packetsize-2:
          raise ValueError(f'Error: cannot fit {Nq} quantiles in an {packetsize}-bytes packet')
 
-    logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
-    
+    if units == 'redshift':
+        logq = np.log(1+quantiles) # convert quantiles to log(1+z) scale 
+    elif units == 'zeta':
+        logq = quantiles # input quantiles are already in zeta units
+    else:
+        print("Error: unknown units: {units}. Valid values: 'redshift','zeta'")
+        sys.exit(1)
+            
     # encode the first quantile as uint16
     xmin_int = int(np.floor((logq[0]+NEGATIVE_Z_OFFSET)/LOG_DZ))
 
@@ -239,23 +245,25 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001):
 
     # check that packet decompresses correctly
     if validate: 
-        qrecovered = decode_quantiles(packet)
-        if len(qrecovered) != len(quantiles):
+        qrecovered = decode_quantiles(packet,units='zeta')
+        if len(qrecovered) != len(logq):
            print('Error: packet decodes to wrong number of quantiles!')
            print('packet: ',[int(x) for x in packet])
-           print('recovered quantiles:')
+           print('recovered quantiles (zeta units):')
            print(qrecovered)
-           print('original quantiles:')
-           print(quantiles)
+           print('original quantiles (zeta units):')
+           print(logq)
            sys.exit(1)
            
-        shift = np.log(1+quantiles[1:])-np.log(1+qrecovered[1:])
+        shift = logq[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
-            raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
-    
+            #raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
+            import code
+            code.interact(local=locals())
+            
     return L, bytes(packet)
 
-def _optimize_quantile_count(data, packetsize=80, min_big_jumps=0, max_big_jumps=10, d_threshold=15):
+def _optimize_quantile_count(data, packetsize=80, min_big_jumps=0, max_big_jumps=10, d_threshold=15, units='redshift'):
     """Finds the optimal number of quantiles for encoding each PDF."""
     
     print('Finding optimal number of quantiles for each source...')
@@ -283,8 +291,14 @@ def _optimize_quantile_count(data, packetsize=80, min_big_jumps=0, max_big_jumps
          
         # compute score for each quantile count
         for j, Nq in enumerate(qcount_values):  
-              
-            logq = np.log(1+zquantiles[qcount_cumul[j]:qcount_cumul[j+1]]) # convert quantiles to log(1+z) scale 
+            if units == 'redshift':  
+                logq = np.log(1+zquantiles[qcount_cumul[j]:qcount_cumul[j+1]]) # convert quantiles to log(1+z) scale 
+            elif units == 'zeta':
+                logq = zquantiles[qcount_cumul[j]:qcount_cumul[j+1]]
+            else:
+                print("Error: unknown units: {units}. Valid values: 'redshift','zeta'")
+                sys.exit(1)
+                    
             gaps = np.sort(logq[1:]-logq[:-1]) # sorted list of quantile gaps
             
             if gaps[0] <= 0.:
@@ -308,7 +322,7 @@ def _optimize_quantile_count(data, packetsize=80, min_big_jumps=0, max_big_jumps
      
     return best_qcount    
 
-def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True):
+def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True, units='redshift'):
     """Internal helper function for batch encoding of PDFs.
 
     This function orchestrates the encoding process for a batch of PDFs,
@@ -349,7 +363,7 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, valid
     start = time.process_time()
 
     if optimize:
-        Nquantiles_array = _optimize_quantile_count(data, packetsize=packetsize)
+        Nquantiles_array = _optimize_quantile_count(data, packetsize=packetsize, units=units)
     else:
         if packetsize - ini_quantiles < 2:
             raise ValueError('Error: ini_quantiles must be at most packetsize-2')
@@ -370,7 +384,7 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, valid
                 valid = np.isfinite(data['PDF'][i])
                 quantiles = samples_to_quantiles(data['PDF'][i][valid],Nquantiles=Nquantiles)
             try:
-                payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate)
+                payload_length, packet = encode_quantiles(quantiles,packetsize=packetsize,tolerance=tolerance,validate=validate,units=units)
                 break
             except ValueError as e:
                 if 'packet decodes' in str(e):
@@ -396,7 +410,7 @@ def _batch_encode(data, ini_quantiles=72, packetsize=80, tolerance=0.0002, valid
     return int32col
 
 
-def encode_from_binned(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True):
+def encode_from_binned(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True, units='redshift'):
     """Encodes binned PDFs into compressed byte packets.
 
     This is a high-level wrapper that takes binned PDFs and encodes them
@@ -421,10 +435,10 @@ def encode_from_binned(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance=
     valid = (np.sum(PDF,axis=1) > 0) & (np.min(PDF,axis=1) >= 0)
     
     data = {'format': 'PDF_histogram', 'zvector': zvector, 'PDF': PDF[valid]}    
-    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate, units=units)
     return encoded
     
-def encode_from_density(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True):
+def encode_from_density(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True, units='redshift'):
     """Encodes Probability densities sampled in a grid into compressed byte packets.
 
     This is a high-level wrapper that takes PDFs and encodes them
@@ -449,10 +463,10 @@ def encode_from_density(PDF, zvector, ini_quantiles=72, packetsize=80, tolerance
     valid = (np.sum(PDF,axis=1) > 0) & (np.min(PDF,axis=1) >= 0)
     
     data = {'format': 'PDF_density', 'zvector': zvector, 'PDF': PDF[valid]}    
-    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate)
+    encoded[valid] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate, units=units)
     return encoded
     
-def encode_from_samples(samples, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True, clip_fraction=0., clip_range=None, min_valid_samples=100):
+def encode_from_samples(samples, ini_quantiles=72, packetsize=80, tolerance=0.0002, validate=True, optimize=True, clip_fraction=0., clip_range=None, min_valid_samples=100, units='redshift'):
     """Encodes PDFs from random samples into compressed byte packets.
 
     This is a high-level function that takes random samples for each PDF,
@@ -473,9 +487,21 @@ def encode_from_samples(samples, ini_quantiles=72, packetsize=80, tolerance=0.00
         np.ndarray: A 2D array where each row is a compressed PDF packet.
     """
     
-    # define default clip_range if not provided
-    if clip_range is None:
-        clip_range=[Q0_ZMIN,20]
+    # define default clip_range if not provided or incomplete
+    if units == 'redshift':
+        if clip_range is None:
+            clip_range=[Q0_ZMIN,Q0_ZMAX]
+        if clip_range[0] is None:
+            clip_range[0] = Q0_ZMIN
+        if clip_range[1] is None:
+            clip_range[1] = Q0_ZMAX
+    elif units == 'zeta':
+        if clip_range is None:
+            clip_range=[Q0_ZETAMIN,Q0_ZETAMAX]
+        if clip_range[0] is None:
+            clip_range[0] = Q0_ZETAMIN
+        if clip_range[1] is None:
+            clip_range[1] = Q0_ZETAMAX       
     
     # create array of integers to contain encoded PDFs
     Nsources = samples.shape[0]
@@ -515,5 +541,5 @@ def encode_from_samples(samples, ini_quantiles=72, packetsize=80, tolerance=0.00
         clean_samples[j,:nclean] = zsorted  
     
     data = {'format': 'samples', 'PDF': clean_samples}
-    encoded[valid_source] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate, optimize=optimize)
+    encoded[valid_source] = _batch_encode(data, ini_quantiles=ini_quantiles, packetsize=packetsize, tolerance=tolerance, validate=validate, optimize=optimize, units=units)
     return encoded

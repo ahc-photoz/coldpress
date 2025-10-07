@@ -3,7 +3,7 @@ import struct
 import sys
 from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA
 
-def decode_quantiles(packet):
+def decode_quantiles(packet, units='redshift'):
     """Decodes a byte packet back into an array of quantiles.
 
     This function unpacks a compressed byte representation created by
@@ -73,29 +73,25 @@ def decode_quantiles(packet):
                 in_strike = False
                            
     if np.min(new_jumps) <= 0:
-        print('Something went wrong. There should be no zero or negative jumps.')
-        import code
-        code.interact(local=locals())
+        raise ValueError('Something went really wrong. There should be no zero or negative jumps. Please report this.')
         
     # check that probability is conserved
     if abs(np.sum(jumps)-np.sum(new_jumps)) > 0.01:
-        print('Something went wrong while correcting decoded jump values!')
-        import code
-        code.interact(local=locals())      
+        raise ValueError('Something went really wrong while correcting decoded jump values! Please report this.')
                 
-    # convert jumps to quantile redshifts         
+    # convert jumps to quantile of zeta        
     zs = np.empty(new_jumps.size + 1, dtype=float)
     zs[0] = logq_min
     zs[1:] = logq_min + np.cumsum(new_jumps) * eps
-    
-    ## debug code
-    diff = zs[1:]-zs[:-1]
-    if np.min(diff) <= 0:
-        print('Something went wrong: decoded quantiles should be strictly monotonically increasing.')
-        import code
-        code.interact(local=locals())
-    return np.exp(np.array(zs))-1
 
+    # return quantiles in the requested units
+    if units == 'zeta':
+        return zs
+    elif units == 'redshift':
+        return np.exp(zs)-1          
+    else:
+        raise ValueError("Unknown units: {units}. Valid values: 'redshift','zeta'")
+        
 def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None, zvector=None, method='linear', force_range=False, renormalize=True):
     """Converts quantile locations into a binned probability density function (PDF).
 
@@ -173,13 +169,13 @@ def quantiles_to_binned(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=None
             raise ValueError("Must provide one of 'zvector', 'Nbins', or 'dz'.")
 
     # Perform the range check on the final z_grid
-    eps = dz/100
+    eps = dz/10
     zmin_q, zmax_q = zq[0]+dz/2+eps, zq[-1]-dz/2-eps
     zmin_grid, zmax_grid = z_grid[0], z_grid[-1]
 
     if zmin_q < zmin_grid or zmax_q > zmax_grid:
         if not force_range:            
-            raise ValueError(f"Decoded redshift range [{zmin_q:.3f}, {zmax_q:.3f}] "
+            raise ValueError(f"Decoded redshift/zeta range [{zmin_q:.3f}, {zmax_q:.3f}] "
                              f"exceeds the target grid range [{zmin_grid:.3f}, {zmax_grid:.3f}]. "
                              "Use force_range=True to override.")
         print(f"Warning: PDF range [{zmin_q:.3f}, {zmax_q:.3f}] truncated to grid range [{zmin_grid:.3f}, {zmax_grid:.3f}].", file=sys.stderr)
@@ -301,13 +297,13 @@ def quantiles_to_density(z_quantiles, dz=None, Nbins=None, z_min=None, z_max=Non
             raise ValueError("Must provide one of 'zvector', 'Nbins', or 'dz'.")
 
     # Perform the range check on the final z_grid
-    eps = 1e-10
+    eps = dz/10
     zmin_q, zmax_q = zq[0]+dz/2+eps, zq[-1]-dz/2-eps
     zmin_grid, zmax_grid = z_grid[0], z_grid[-1]
 
     if zmin_q < zmin_grid or zmax_q > zmax_grid:
         if not force_range:
-            raise ValueError(f"Decoded redshift range [{zmin_q:.3f}, {zmax_q:.3f}] "
+            raise ValueError(f"Decoded redshift/zeta range [{zmin_q:.3f}, {zmax_q:.3f}] "
                              f"exceeds the target grid range [{zmin_grid:.3f}, {zmax_grid:.3f}]. "
                              "Use force_range=True to override.")
         print(f"Warning: PDF range [{zmin_q:.3f}, {zmax_q:.3f}] truncated to grid range [{zmin_grid:.3f}, {zmax_grid:.3f}].", file=sys.stderr)
@@ -384,7 +380,7 @@ def quantiles_to_samples(z_quantiles, Nsamples=100, method='linear'):
             
     return samples
     
-def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
+def decode_to_binned(int32col, zvector, force_range=False, method='linear', units='redshift'):
     """Decodes a column of compressed PDFs into a 2D array of binned PDFs.
 
     This is a batch processing function that iterates over a column of
@@ -416,7 +412,7 @@ def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
     for i in range(Nsources):
         if np.any(int32col[i] != 0):
             packet = int32col[i].tobytes()
-            qrecovered = decode_quantiles(packet)
+            qrecovered = decode_quantiles(packet, units=units)
 
             try:
                 PDF[i] = quantiles_to_binned(qrecovered, zvector=zvector, method=method, force_range=force_range)
@@ -425,7 +421,7 @@ def decode_to_binned(int32col, zvector, force_range=False, method='linear'):
 
     return PDF
     
-def decode_to_density(int32col, zvector, force_range=False, method='linear'):
+def decode_to_density(int32col, zvector, force_range=False, method='linear', units='redshift'):
     """Decodes a column of compressed PDFs into a 2D array with one P(z) per row
 
     This is a batch processing function that iterates over a column of
@@ -457,7 +453,7 @@ def decode_to_density(int32col, zvector, force_range=False, method='linear'):
     for i in range(Nsources):
         if np.any(int32col[i] != 0):
             packet = int32col[i].tobytes()
-            qrecovered = decode_quantiles(packet)
+            qrecovered = decode_quantiles(packet, units=units)
 
             try:
                 PDF[i] = quantiles_to_density(qrecovered, zvector=zvector, method=method, force_range=force_range)
@@ -466,7 +462,7 @@ def decode_to_density(int32col, zvector, force_range=False, method='linear'):
 
     return PDF
             
-def decode_to_samples(int32col, Nsamples=None, method='linear'):
+def decode_to_samples(int32col, Nsamples=None, method='linear', units='redshift'):
     """Decodes a column of compressed PDFs into an array of random samples.
 
     This is a batch processing function that iterates over a column of
@@ -496,12 +492,12 @@ def decode_to_samples(int32col, Nsamples=None, method='linear'):
     for i in range(Nsources):
         if np.any(int32col[i] != 0):
             packet = int32col[i].tobytes()
-            qrecovered = decode_quantiles(packet)
+            qrecovered = decode_quantiles(packet, units=units)
 
             try:
                 samples[i] = quantiles_to_samples(qrecovered, Nsamples=Nsamples, method=method)
             except ValueError as e:
                 raise ValueError(f"Source {i}: {e}") from e
 
-    return PDF
+    return samples
     

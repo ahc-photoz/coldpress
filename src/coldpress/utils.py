@@ -72,7 +72,7 @@ def step_pdf_from_quantiles(quantiles):
     p_steps_extended = np.concatenate(([0],p_steps,[0]))
     return z_steps_extended, p_steps_extended
     
-def plot_from_quantiles(quantiles, output_filename=None, interactive=False, markers=None, source_id=None, method='all'):
+def plot_from_quantiles(quantiles, output_filename=None, interactive=False, markers=None, source_id=None, method='all', units='redshift'):
     """Generates and saves or displays a plot of a single PDF from its quantiles.
 
     Reconstructs a PDF using one or more methods ('steps', 'spline') and
@@ -123,10 +123,18 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
             if value is not None and np.isfinite(value):
                 style = linestyles[i % len(linestyles)]
                 color = colors[(i+2) % len(colors)]
-                plt.axvline(x=value, linestyle=style, color=color, label=f'{name} = {value:.4f}', alpha=0.9)
+                if units == 'redshift':
+                    xvalue = value
+                elif units == 'zeta':
+                    xvalue = np.log(1+value)    
+                plt.axvline(x=xvalue, linestyle=style, color=color, label=f'{name} = {value:.4f}', alpha=0.9)
 
-    ax.set_xlabel('Redshift (z)')
-    ax.set_ylabel('Probability Density P(z)')
+    if units == 'redshift':
+        ax.set_xlabel('Redshift (z)')
+        ax.set_ylabel('Probability Density P(z)')
+    elif units == 'zeta':
+        ax.set_xlabel('ζ = ln(1+z)')
+        ax.set_ylabel('Probability Density P(ζ)')
     
     title = 'Reconstructed PDF'
     if source_id:
