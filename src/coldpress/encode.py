@@ -257,9 +257,7 @@ def encode_quantiles(quantiles, packetsize=80, validate=True, tolerance=0.0001, 
            
         shift = logq[1:]-qrecovered[1:]
         if max(abs(shift)) > tolerance:
-            #raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
-            import code
-            code.interact(local=locals())
+            raise ValueError(f'Error: shift in quantiles exceeds tolerance = {tolerance:.1g}.')
             
     return L, bytes(packet)
 
