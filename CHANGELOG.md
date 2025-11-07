@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.1.0] - 2025-11-08
+
+### Added
+- **Support for zeta units.** New keyword *units* in encoding, decoding, and plotting functions allows to
+    specify if the PDF is sampled in units of redshift (*z*) or *ζ* = ln(1+*z*).
+    
+- **Auto-optimization of the number of quantiles.** Batch-encoding functions now accept a new keyword *optimize* that instructs *ColdPress* to find the optimal number of quantiles for encoding each PDF within the given packet length. It finds a compromise between the competing goals of minimizing *epsilon* and maximizing the quantile count.
+    
+### Changed
+
+- **Reorganized CLI options.** Some arguments for the encode and decode modes of the CLI have been redefined to accomodate both redshift and zeta units.
+
+- **Modified treatment of tolerance parameter.** Now *tolerance* refers to the maximum error in ln(1+*z*), instead of *z*, for the quantiles. The condition on *epsilon* has been updated to *epsilon* < 2 * *tolerance*.
+
+
+### Fixed
+
+- **Ambiguous encoding for zero-sized last jump.** In some very weird PDFs, the last two quantiles can be close enough for their difference being rounded to 0 during quantization. A final jump of 0 is imposible to distinguish from trailing zeros indicating empty bytes in the packet. This causes the last quantile to be missed in decoding. Fixed by turning a zero-sized last jump into an 1.
+
+- **Fixed minor issues in the decode module.**
+- **Added access via API to additional functions.** These were already implemented but not directly accesible from the API.
+
+
 ## [1.0.1] - 2025-09-06
 
 ### Fixed

@@ -9,14 +9,20 @@ from astropy.io import fits
 
 from . import __version__
 from .encode import encode_from_binned, encode_from_density, encode_from_samples
-from .decode import decode_to_binned, decode_quantiles
+from .decode import decode_to_binned, decode_to_samples, decode_to_density, decode_quantiles
 from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
 from .utils import plot_from_quantiles
+from .constants import Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX
 
 # --- Constants for Default Column Names ---
 DEFAULT_ID_COL = 'ID'
-DEFAULT_ENCODED_COL = 'coldpress_PDF'
-DEFAULT_DECODED_COL = 'PDF_decoded'
+DEFAULT_ENCODED_COL = 'COLDPRESS_PDF'
+
+# --- Constants for numeric parameter values ---
+DEFAULT_PACKET_LENGTH = 80
+DEFAULT_TOLERANCE = 0.001
+DEFAULT_ODDS_WINDOW = 0.03
+
 
 def find_column_name(columns, name):
     """
@@ -154,11 +160,14 @@ def encode_logic(args):
             - samples (str, optional): Name of the column with PDF samples.
             - zmin (float, optional): Min redshift.
             - zmax (float, optional): Max redshift.
+            - zetamin (float, optional): Min zeta.
+            - zetamax (float, optional): Max zeta.
             - out_encoded (str): Name for the output column with encoded data.
             - validate (bool): Whether to validate the encoding accuracy.
             - tolerance (float): Tolerance for validation.
             - keep_orig (bool): Whether to keep the original PDF column.
             - clip_fraction (float): Fraction of samples to be clipped out at the extremes of the redshift range.
+            - units (str): Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).
     """
     if args.length % 4 != 0:
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
@@ -170,49 +179,41 @@ def encode_logic(args):
         header = h[1].header
         orig_cols = list(h[1].columns)
         
+        # verify the column containing de PDFs to be encoded:
+        orig_column = args.samples or args.binned or args.density        
+        actual_orig_column = find_column_name(h[1].columns, orig_column)
+        if actual_orig_column is None:
+            print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
+            sys.exit(1)
+
+        # define range of independent variable:                
+        if args.units == 'redshift':
+            xrange = [args.zmin, args.zmax]
+        elif args.units == 'zeta':
+            xrange = [args.zetamin, args.zetamax]
+
         if args.samples is not None:
-            orig_column = args.samples
-            actual_orig_column = find_column_name(h[1].columns, orig_column)
-            if actual_orig_column is None:
-                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
-                sys.exit(1)
             history = f'PDFs from samples in column {actual_orig_column} cold-pressed as {args.out_encoded}'
-            print(f"Generating quantiles from random redshift samples and compressing into {args.length}-byte packets...")
-            if (args.zmin is not None) and (args.zmax) is not None:
-                clip_range = [args.zmin, args.zmax]
-            else:
-                clip_range = None    
+            print(f"Generating quantiles from random samples and compressing into {args.length}-byte packets...")
+            
             samples = h[1].data[actual_orig_column]
             coldpress_PDF = encode_from_samples(samples, packetsize=args.length, ini_quantiles=args.length-8, 
                                                 validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction, 
-                                                clip_range=clip_range) 
-        elif args.binned is not None:
-            orig_column = args.binned
-            actual_orig_column = find_column_name(h[1].columns, orig_column)
-            if actual_orig_column is None:
-                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
-                sys.exit(1)
-            history = f'Binned PDFs in column {actual_orig_column} cold-pressed as {args.out_encoded}'
+                                                clip_range=xrange, units=args.units) 
+     
+        else:
+            history = f'PDFs in column {actual_orig_column} cold-pressed as {args.out_encoded}'
             PDF = h[1].data[actual_orig_column]
-            zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
+            zvector = np.linspace(xrange[0], xrange[1], PDF.shape[1])
             cratio = PDF.shape[1]*PDF.itemsize/args.length
-            print(f"Compressing binned PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
-            coldpress_PDF = encode_from_binned(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
-                                                validate=args.validate, tolerance=args.tolerance)
-        elif args.density is not None:
-            orig_column = args.density
-            actual_orig_column = find_column_name(h[1].columns, orig_column)
-            if actual_orig_column is None:
-                print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
-                sys.exit(1)
-            history = f'Probability density in column {actual_orig_column} cold-pressed as {args.out_encoded}'
-            PDF = h[1].data[actual_orig_column]
-            zvector = np.linspace(args.zmin, args.zmax, PDF.shape[1])
-            cratio = PDF.shape[1]*PDF.itemsize/args.length
-            print(f"Compressing density PDFs into {args.length}-byte packets (compression ratio: {cratio:.2f})...")
-            coldpress_PDF = encode_from_density(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
-                                                validate=args.validate, tolerance=args.tolerance)
             
+            if args.binned is not None:
+               coldpress_PDF = encode_from_binned(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+                                                  validate=args.validate, tolerance=args.tolerance, units=args.units)
+            elif args.density is not None:
+               coldpress_PDF = encode_from_density(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+                                                   validate=args.validate, tolerance=args.tolerance, units=args.units)
+                      
                                                                                                
         nints = args.length // 4
         new_col = fits.Column(name=args.out_encoded, format=f'{nints}J', array=coldpress_PDF)
@@ -248,12 +249,19 @@ def decode_logic(args):
             - input (str): Path to the input FITS file.
             - output (str): Path for the output FITS file.
             - encoded (str): Name of the column with encoded PDFs.
-            - out_binned (str): Name for the output column with binned PDFs.
+            - density (str, optional): Name for the output column with PDF density.
+            - binned (str, optional): Name for the output column with binned PDF.
+            - samples (str, optional): Name for the output column with samples.
             - zmin (float): Minimum redshift for the output grid.
             - zmax (float): Maximum redshift for the output grid.
-            - zstep (float): Step size for the output redshift grid.
-            - force_range (bool): If True, truncates PDFs outside the grid.
+            - zetamin (float): Minimum zeta=ln(1+z) for the output grid.
+            - zetamax (float): Maximum zeta=ln(1+z) for the output grid.
+            - nvalues (int): number of bins/steps/samples in the output PDF.
+            - force_range (bool): If True, truncates PDFs outside the grid when needed.
             - method (str): Interpolation method ('linear' or 'spline').
+            - units (str): Specifies the representation for the PDF\'s independent axis: 
+               "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).
+          
     """
     
     print(f"Opening input file: {args.input}")
@@ -267,23 +275,38 @@ def decode_logic(args):
         header = hdu.header
         orig_cols = list(hdu.columns)
 
-        zvector = np.arange(args.zmin, args.zmax + args.zstep/2, args.zstep)
-        zvsize = len(zvector)
+        # define range of independent variable:                
+        if args.units == 'redshift':
+            xrange = [args.zmin, args.zmax]
+        elif args.units == 'zeta':
+            xrange = [args.zetamin, args.zetamax]
 
-        print(f"Decompressing PDFs using {args.method} interpolation of the quantiles...")
-        try:
-            decoded_PDF = decode_to_binned(qcold, zvector, force_range=args.force_range, method=args.method)
-        except ValueError as e:
-            print(f"Error: {e}", file=sys.stderr)
-            print("Hint: Use the --force-range flag to proceed with truncation at your own risk.", file=sys.stderr)
-            sys.exit(1)
+        if args.binned or args.density:
+            zvector = np.linspace(xrange[0], xrange[1], args.nvalues)
+                
+            print(f"Decompressing PDFs using {args.method} interpolation of the quantiles...")
+            try:
+                if args.binned:
+                    out_column_name = args.binned
+                    decoded_PDF = decode_to_binned(qcold, zvector, force_range=args.force_range, method=args.method, units=args.units)
+                if args.density:
+                    out_column_name = args.density
+                    decoded_PDF = decode_to_density(qcold, zvector, force_range=args.force_range, method=args.method, units=args.units)                
+            except ValueError as e:
+                print(f"Error: {e}", file=sys.stderr)
+                print("Hint: Use the --force-range flag to proceed with truncation at your own risk.", file=sys.stderr)
+                sys.exit(1)
 
-        new_col = fits.Column(name=args.out_binned, format=f'{zvsize}E', array=decoded_PDF)
-        final_cols = [c for c in orig_cols if c.name.upper() != args.out_binned.upper()]
+        elif args.samples:
+            out_column_name = args.samples
+            decoded_PDF = decode_to_samples(qcold, Nsamples=args.nvalues, method=args.method, units=args.units)
+
+        new_col = fits.Column(name=out_column_name, format=f'{args.nvalues}E', array=decoded_PDF)
+        final_cols = [c for c in orig_cols if c.name.upper() != out_column_name.upper()]
         final_cols.append(new_col)
         new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
     
-    new_hdu.header.add_history(f'PDFs in column {actual_encoded_name} extracted as {args.out_binned}')
+    new_hdu.header.add_history(f'PDFs in column {actual_encoded_name} extracted as {out_column_name}')
     print(f"Writing decompressed data to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
@@ -385,6 +408,9 @@ def plot_logic(args):
               ('linear' or 'spline').
             - quantities (list, optional): List of FITS columns to
               overplot as vertical lines.
+            - units (str): Specifies the representation for the PDF\'s independent axis: 
+              "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).
+  
     """
     try:
         import matplotlib
@@ -446,7 +472,7 @@ def plot_logic(args):
             print(f"Skipping source {source_id_val}: No valid PDF data.")
             continue
 
-        quantiles = decode_quantiles(qcold[i].tobytes())
+        quantiles = decode_quantiles(qcold[i].tobytes(),units=args.units)
         
         markers_to_plot = {}
         if args.quantities:
@@ -454,7 +480,7 @@ def plot_logic(args):
                 actual_col_name = next((c.name for c in data.columns if c.name.upper() == q_col.upper()), None)
                 if actual_col_name:
                     markers_to_plot[q_col] = data[actual_col_name][i]
-
+                        
         output_filename = None
         if not args.interactive:
             output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
@@ -466,7 +492,8 @@ def plot_logic(args):
                 interactive=args.interactive,
                 source_id=str(source_id_val),
                 method=args.method,
-                markers=markers_to_plot
+                markers=markers_to_plot,
+                units=args.units
             )
             if not args.interactive:
                 print(f"Saved plot to {output_filename}")
@@ -602,18 +629,21 @@ def main():
     parser_encode = subparsers.add_parser('encode', help='Compress PDFs into coldpress format.')
     parser_encode.add_argument('input', metavar='input.fits', type=str, help='Name of input FITS catalog.')
     parser_encode.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS catalog.')
-    format_group = parser_encode.add_mutually_exclusive_group(required=True)
-    format_group.add_argument('--density', type=str, help='Name of input column containing probability densities sampled in a grid of redshifts.')
-    format_group.add_argument('--binned', type=str, help='Name of input column containing probabilities inside redshift bins.')
-    format_group.add_argument('--samples', type=str, help='Name of input column containing a set of random redshift samples from the underlying probability distribution.')
+    encode_group = parser_encode.add_mutually_exclusive_group(required=True)
+    encode_group.add_argument('--density', type=str, help='Name of input column containing probability densities sampled in a grid of redshifts.')
+    encode_group.add_argument('--binned', type=str, help='Name of input column containing probabilities inside redshift bins.')
+    encode_group.add_argument('--samples', type=str, help='Name of input column containing a set of random redshift samples from the underlying probability distribution.')
     parser_encode.add_argument('-o', '--out-encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of output column containing the cold-pressed PDFs.')
     parser_encode.add_argument('--zmin', type=float, help='Lowest redshift in the grid/bins')
     parser_encode.add_argument('--zmax', type=float, help='Highest redshift in the grid/bins')
-    parser_encode.add_argument('--length', type=int, nargs='?', default=80, help='Length of compressed PDFs in bytes (must be multiple of 4).')
+    parser_encode.add_argument('--zetamin', type=float, help='Lowest zeta=ln(1+z) in the grid/bins')
+    parser_encode.add_argument('--zetamax', type=float, help='Highest zeta=ln(1+z) in the grid/bins')    
+    parser_encode.add_argument('--length', type=int, nargs='?', default=DEFAULT_PACKET_LENGTH, help='Length of compressed PDFs in bytes (must be multiple of 4).')
     parser_encode.add_argument('--validate', action='store_true', default=False, help='Verify accuracy of recovered quantiles.')
-    parser_encode.add_argument('--tolerance', type=float, nargs='?', default=0.001, help='Maximum shift tolerated for the redshift of the quantiles.')
+    parser_encode.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
     parser_encode.add_argument('--keep-orig', action='store_true', help='Include the original input column with binned PDFs or samples in the output file.')
     parser_encode.add_argument('--clip-fraction', type=float, nargs='?', default=0, help='Fraction of samples to clip out at the extremes of the redshift range.')
+    parser_encode.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_encode.set_defaults(func=encode_logic)
 
     # --- Parser for the "decode" command ---
@@ -621,12 +651,18 @@ def main():
     parser_decode.add_argument('input', type=str, help='Name of input FITS catalog')
     parser_decode.add_argument('output', type=str, help='Name of output FITS catalog')
     parser_decode.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of column containing cold-pressed PDFs.')
-    parser_decode.add_argument('-o', '--out-binned', type=str, nargs='?', default=DEFAULT_DECODED_COL, help='Name of output column for extracted binned PDFs.')
-    parser_decode.add_argument('--zmin', type=float, help='Redshift of the first bin.')
-    parser_decode.add_argument('--zmax', type=float, help='Redshift of the last bin.')
-    parser_decode.add_argument('--zstep', type=float, help='Width of the redshift bins.')
-    parser_decode.add_argument('--force-range', action='store_true', help='Force binning to the range [zmin,zmax] even if PDFs are truncated.')
+    decode_group = parser_decode.add_mutually_exclusive_group(required=True)
+    decode_group.add_argument('--density', type=str, help='Name of output column to contain probability densities sampled in a grid.')
+    decode_group.add_argument('--binned', type=str, help='Name of output column to contain probabilities inside bins.')
+    decode_group.add_argument('--samples', type=str, help='Name of output column to contain a set of random samples from the underlying probability distribution.')
+    parser_decode.add_argument('--nvalues', type=int, required=True, help='Number of bins/steps/samples for the output PDF')
+    parser_decode.add_argument('--zmin', type=float, help='Lowest redshift in the grid/bins/samples')
+    parser_decode.add_argument('--zmax', type=float, help='Highest redshift in the grid/bins/samples')
+    parser_decode.add_argument('--zetamin', type=float, help='Lowest zeta=ln(1+z) in the grid/bins/samples')
+    parser_decode.add_argument('--zetamax', type=float, help='Highest zeta=ln(1+z) in the grid/bins/samples')    
+    parser_decode.add_argument('--force-range', action='store_true', help='Force the redshift/zeta range even if PDFs are truncated.')
     parser_decode.add_argument('--method', type=str, nargs='?', default='linear', choices=['linear','spline'], help='Interpolation method for PDF reconstruction (default: linear).')
+    parser_decode.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_decode.set_defaults(func=decode_logic)
 
     # --- Parser for the "measure" command ---
@@ -636,7 +672,7 @@ def main():
     parser_measure.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of column containing cold-pressed PDFs.')
     choices_list = sorted(list(ALL_QUANTITIES) + ['ALL'])
     parser_measure.add_argument('--quantities', type=str.upper, nargs='+', default=['ALL'], choices=choices_list, metavar='QUANTITY', help='List of quantities to measure from the PDFs (default: all).')
-    parser_measure.add_argument('--odds-window', type=float, default=0.03, help='Half-width of the integration window for odds calculation.')
+    parser_measure.add_argument('--odds-window', type=float, default=DEFAULT_ODDS_WINDOW, help='Half-width of the integration window for odds calculation.')
     parser_measure.add_argument('--list-quantities', action='store_true', help='List all available quantities and their descriptions.')
                               
     parser_measure.set_defaults(func=measure_logic)
@@ -655,6 +691,7 @@ def main():
     parser_plot.add_argument('--format', type=str, default='png', help='Output format for plots.')
     parser_plot.add_argument('--method', type=str, default='all', choices=['steps', 'spline', 'all'], help='PDF reconstruction method for plots.')
     parser_plot.add_argument('--quantities', nargs='+', type=str, help='List of FITS columns to overplot as vertical lines.')
+    parser_plot.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_plot.set_defaults(func=plot_logic)
     
     # --- Parser for the "check" command ---
@@ -671,14 +708,25 @@ def main():
 
     args = parser.parse_args()
     
-    if args.command == 'encode':
-        if args.binned and (args.zmin is None or args.zmax is None):
-            parser.error('--zmin and --zmax are required when encoding from binned PDFs (--binned)')
-        if args.density and (args.zmin is None or args.zmax is None):
-            parser.error('--zmin and --zmax are required when encoding from probability density (--density)')
-        if args.samples is None and args.clip_fraction != 0.:
-            parser.error('--clip-fraction can only be used with PDFs by random samples (--samples)')    
+    if args.command in ['encode','decode']:
+        if args.units == 'redshift':
+            if args.zetamin is not None or args.zetamax is not None:
+                parser.error("Cannot use --zetamin/--zetamax with --units redshift. Use --zmin/--zmax instead.")
+            if args.binned or args.density:
+                if args.zmin is None or args.zmax is None:
+                    parser.error("--zmin and --zmax are required for --units redshift.")
+     
+        elif args.units == 'zeta':
+            if args.zmin is not None or args.zmax is not None:
+                parser.error("Cannot use --zmin/--zmax with --units zeta. Use --zetamin/--zetamax instead.")
+            if args.binned or args.density:
+                if args.zetamin is None or args.zetamax is None:
+                    parser.error("--zetamin and --zetamax are required for --units zeta.")
 
+    if args.command == 'encode':
+        if (args.binned or args.density) and args.clip_fraction != 0.:
+            parser.error('--clip-fraction can only be used with PDFs by random samples (--samples)')                            
+     
     if args.command == 'check' and args.list and args.idcol is None:
         parser.error('--idcol is required when listing sources with flagged issues (--list)')
 

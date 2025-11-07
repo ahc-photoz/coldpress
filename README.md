@@ -21,10 +21,16 @@ Once the PDFs are stored in the **coldpress** format, **coldpress** can perform 
 
 The **coldpress** package requires Python 3.8 or newer. The main dependencies are **numpy** and **astropy**. **matplotlib** is required for the `plot` command, and **scipy** is required for the `spline` interpolation method.
 
-You can install **coldpress** directly from GitHub using `pip`:
+You can install **coldpress** directly from GitHub with `pip`. 
+To install the latest stable version, use:
 
 ```bash
-pip install git+https://github.com/ahc-photoz/coldpress.git
+pip install https://github.com/ahc-photoz/coldpress/releases/latest/download/coldpress-latest.tar.gz
+```
+To install the latest update from the development branch, use:
+
+```bash
+pip install https://github.com/ahc-photoz/coldpress.git@develop
 ```
 
 ## Usage
@@ -98,8 +104,9 @@ To compress the PDFs, we provide the input and output filenames, the redshift ra
 coldpress encode hsc_sample.fits hsc_sample_encoded.fits --zmin 0 --zmax 7 --density PDF
 ```
 ```
-Compressing density PDFs into 80-byte packets (compression ratio: 35.05)...
-1000 PDFs cold-pressed in 0.369613 CPU seconds
+Opening input file: hsc_sample.fits
+Finding optimal number of quantiles for each source...
+1000 PDFs cold-pressed in 0.945312 CPU seconds
 Excluding column 'PDF' from output FITS table.
 Writing compressed data to: hsc_sample_encoded.fits
 Done.
@@ -186,10 +193,10 @@ coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID 
 
 For cases where you need the PDF in a standard binned format for other software, the `decode` command reconstructs the histogram on any grid you define.
 
-For example, to reconstruct the PDFs in a finer grid using monotonic spline interpolation:
+For example, to reconstruct the PDFs using a grid with twice the redshift resolution (*z* steps of 0.005 instead of 0.1) using monotonic spline interpolation from *z*=0 to *z*=7 and stored in a column named PDF_highres:
 
 ```bash
-coldpress decode hsc_sample_encoded.fits hsc_sample_decoded.fits --zmin 0 --zmax 7 --zstep 0.005 --method spline
+coldpress decode hsc_sample_encoded.fits hsc_sample_decoded.fits --density PDF_highres --zmin 0 --zmax 7 --nvalues 1401 --method spline
 ```
 > [!WARNING]
 > If a decoded PDF has non-zero probability outside the range you specify, `coldpress` will raise a truncation error. Use the `--force-range` flag to allow truncation. 
