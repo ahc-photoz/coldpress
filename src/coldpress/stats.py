@@ -7,14 +7,14 @@ QUANTITY_DESCRIPTIONS = {
     'Z_RANDOM': 'A random redshift value obtained with the PDF as the underlying probability distribution.',
     'Z_MODE_ERR': '1-sigma uncertainty in Z_MODE.',
     'Z_MEAN_ERR': '1-sigma uncertainty in Z_MEAN.',
-    'ODDS_MODE': 'Odds parameter for Z_MODE.',
-    'ODDS_MEAN': 'Odds parameter for Z_MEAN.',
+    'Z_MEDIAN_ERR': '1-sigma uncertainty in Z_MEDIAN.',
     'Z_MIN_HPDCI68': 'Lower bound of the 68% highest posterior density credible interval.',
     'Z_MAX_HPDCI68': 'Upper bound of the 68% highest posterior density credible interval.',
     'Z_MIN_HPDCI95': 'Lower bound of the 95% highest posterior density credible interval.',
     'Z_MAX_HPDCI95': 'Upper bound of the 95% highest posterior density credible interval.',
     'ODDS_MODE': 'Probability that the true redshift lies within a specific interval around Z_MODE (default is ± 0.03 × (1 + Z_MODE).',
-    'ODDS_MEAN': 'Probability that the true redshift lies within a specific interval around Z_MEAN (default is ± 0.03 × (1 + Z_MEAN).'
+    'ODDS_MEAN': 'Probability that the true redshift lies within a specific interval around Z_MEAN (default is ± 0.03 × (1 + Z_MEAN).',
+    'ODDS_MEDIAN': 'Probability that the true redshift lies within a specific interval around Z_MEDIAN (default is ± 0.03 × (1 + Z_MEDIAN).'
 }
 
 ALL_QUANTITIES = set(QUANTITY_DESCRIPTIONS.keys())
@@ -48,8 +48,11 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
     dependencies = {
         'Z_MODE': ['Z_MIN_HPDCI68','Z_MAX_HPDCI68'],
         'Z_MODE_ERR': ['Z_MODE'],
+        'Z_MEAN_ERR': ['Z_MEAN'],
+        'Z_MEDIAN_ERR': ['Z_MEDIAN'],
         'ODDS_MODE': ['Z_MODE'],
-        'ODDS_MEAN': ['Z_MEAN']
+        'ODDS_MEAN': ['Z_MEAN'],
+        'ODDS_MEDIAN': ['Z_MEDIAN']
     }
 
     # Determine which quantities to compute
@@ -89,12 +92,16 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
         temp_results['Z_RANDOM'] = zrandom_from_quantiles(quantiles)
     if 'Z_MEAN_ERR' in internal_calcs:
         temp_results['Z_MEAN_ERR'] = zmean_err_from_quantiles(quantiles)
+    if 'Z_MEDIAN_ERR' in internal_calcs:
+        temp_results['Z_MEDIAN_ERR'] = 0.5 * (HPDCI68_zmax - HPDCI68_zmin)
+    if 'Z_MODE_ERR' in internal_calcs:
+        temp_results['Z_MODE_ERR'] = 0.5 * (HPDCI68_zmax - HPDCI68_zmin)
     if 'ODDS_MODE' in internal_calcs:
         temp_results['ODDS_MODE'] = odds_from_quantiles(quantiles, temp_results['Z_MODE'], odds_window=odds_window)
     if 'ODDS_MEAN' in internal_calcs:
         temp_results['ODDS_MEAN'] = odds_from_quantiles(quantiles, temp_results['Z_MEAN'], odds_window=odds_window)
-    if 'Z_MODE_ERR' in internal_calcs:
-        temp_results['Z_MODE_ERR'] = 0.5 * (HPDCI68_zmax - HPDCI68_zmin)
+    if 'ODDS_MEDIAN' in internal_calcs:
+        temp_results['ODDS_MEDIAN'] = odds_from_quantiles(quantiles, temp_results['Z_MEDIAN'], odds_window=odds_window)
 
     # Filter the results to return only the originally requested quantities
     final_results = {key: temp_results[key] for key in q_to_compute if key in temp_results}
