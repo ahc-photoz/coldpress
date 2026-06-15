@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] - 2026-06-15
+
+### Fixed
+
+Added previously missing point estimates to the coldpress measure command: ODDS_MEDIAN and Z_MEDIAN_ERR
+
 ## [1.1.0] - 2025-11-08
 
 ### Added
