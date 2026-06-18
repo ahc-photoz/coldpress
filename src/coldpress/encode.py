@@ -4,6 +4,9 @@ from .constants import NEGATIVE_Z_OFFSET, LOG_DZ, EPSILON_MIN, EPSILON_BETA, Q0_
 import sys
 import time
 
+# make sure to call trapz() for Numpy 1.X or trapezoid() for Numpy 2.X
+trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
 
 def samples_to_quantiles(sorted_samples, Nquantiles=100, target_quantiles=None):
     """Calculates quantiles from a set of random samples of a PDF.
@@ -117,7 +120,7 @@ def density_to_quantiles(zvector, pdf_density, Nquantiles=100, upsample_factor=1
     pdf_hires = np.interp(z_hires, z_trimmed, pdf_trimmed)
     
     # 1. Normalize the PDF so that its integral is 1.
-    total_area = np.trapz(pdf_hires, z_hires)
+    total_area = trapz(pdf_hires, z_hires)
             
     normalized_pdf = pdf_hires / total_area
 

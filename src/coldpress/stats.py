@@ -1,5 +1,9 @@
 import numpy as np
 
+# make sure to call trapz() for Numpy 1.X or trapezoid() for Numpy 2.X
+trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
+
 QUANTITY_DESCRIPTIONS = {
     'Z_MODE': 'Mode of the redshift PDF, defined as the redshift with maximum probability density.',
     'Z_MEAN': 'Mean of the redshift PDF, defined as the integral over z of z*P(z).',
@@ -182,7 +186,7 @@ def zmean_from_quantiles(quantiles):
         float: The mean redshift (Z_MEAN).
     """
     knots = np.linspace(0, 1, len(quantiles))
-    return np.trapz(quantiles, knots)
+    return trapz(quantiles, knots)
 
 def zmean_err_from_quantiles(quantiles):
     """Calculates the standard deviation (error) of the mean redshift.
@@ -197,8 +201,8 @@ def zmean_err_from_quantiles(quantiles):
         float: The standard deviation of the redshift distribution.
     """
     knots = np.linspace(0, 1, len(quantiles))
-    mean = np.trapz(quantiles, knots)
-    ez2 = np.trapz(quantiles**2, knots)
+    mean = trapz(quantiles, knots)
+    ez2 = trapz(quantiles**2, knots)
     variance = ez2 - mean**2
     return np.sqrt(variance)
 

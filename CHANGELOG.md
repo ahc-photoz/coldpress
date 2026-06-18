@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.2] - 2026-06-19
+
+## Fixed
+
+Replace deprecated np.trapz with version-safe alias
+
+- Implemented `hasattr` fallback for `np.trapezoid` to maintain cross-version compatibility.
+- Updated calls in `stats.py` and `encode.py`.
+
 ## [1.1.1] - 2026-06-15
 
 ### Fixed
