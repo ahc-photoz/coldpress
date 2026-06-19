@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.0]
+
+## Added
+
+- New `--seed` argument in `measure` CLI command generates reproducible Z_RANDOM values.
+
 ## [1.1.2] - 2026-06-19
 
 ## Fixed
