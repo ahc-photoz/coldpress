@@ -23,7 +23,7 @@ QUANTITY_DESCRIPTIONS = {
 
 ALL_QUANTITIES = set(QUANTITY_DESCRIPTIONS.keys())
 
-def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
+def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03, u=None):
     """Computes a set of statistical quantities from a PDF's quantiles.
 
     This function acts as a dispatcher, calculating various point estimates
@@ -41,6 +41,8 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
         odds_window (float, optional): The half-width of the integration
             window for odds calculations, as a fraction of (1+z).
             Defaults to 0.03.
+        u (float, optional): A pre-generated uniform random variable on [0, 1].
+            Used to compute Z_RANDOM deterministically. Defaults to None.
 
     Returns:
         dict[str, float]: A dictionary mapping the name of each requested
@@ -93,7 +95,7 @@ def measure_from_quantiles(quantiles, quantities_to_measure, odds_window=0.03):
     if 'Z_MEDIAN' in internal_calcs:
         temp_results['Z_MEDIAN'] = zmedian_from_quantiles(quantiles)
     if 'Z_RANDOM' in internal_calcs:
-        temp_results['Z_RANDOM'] = zrandom_from_quantiles(quantiles)
+        temp_results['Z_RANDOM'] = zrandom_from_quantiles(quantiles, u=u)
     if 'Z_MEAN_ERR' in internal_calcs:
         temp_results['Z_MEAN_ERR'] = zmean_err_from_quantiles(quantiles)
     if 'Z_MEDIAN_ERR' in internal_calcs:
@@ -206,7 +208,7 @@ def zmean_err_from_quantiles(quantiles):
     variance = ez2 - mean**2
     return np.sqrt(variance)
 
-def zrandom_from_quantiles(quantiles):
+def zrandom_from_quantiles(quantiles, u=None):
     """Draws a single random redshift value from the PDF.
 
     This uses inverse transform sampling by drawing a uniform random number
@@ -215,11 +217,14 @@ def zrandom_from_quantiles(quantiles):
 
     Args:
         quantiles (np.ndarray): A 1D array of monotonic quantile locations.
+        u (float, optional): A pre-generated uniform random variable on [0, 1].
+            If None, a new random variable is drawn. Defaults to None.
 
     Returns:
         float: A single random redshift draw.
     """
-    u = np.random.uniform(0, 1)
+    if u is None:
+        u = np.random.uniform(0, 1)
     knots = np.linspace(0, 1, len(quantiles))
     return np.interp(u, knots, quantiles)
 

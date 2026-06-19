@@ -329,6 +329,7 @@ def measure_logic(args):
               quantities to measure (e.g., ['Z_MEAN', 'Z_MODE']). 'ALL'
               computes all available quantities.
             - odds_window (float): Half-width for the odds calculation.
+            - seed (int, optional): Seed for random number generation.
     """
 
     print(f"Opening input file: {args.input}")
@@ -357,13 +358,17 @@ def measure_logic(args):
     valid_indices = np.where(valid)[0]
     print(f"Calculating point estimates for {len(valid_indices)} valid sources...")
     
-    for i in valid_indices:
+    rng = np.random.default_rng(args.seed)
+    u_array = rng.uniform(0, 1, size=len(valid_indices))
+    
+    for idx, i in enumerate(valid_indices):
         quantiles = decode_quantiles(qcold[i].tobytes())
                         
         results = measure_from_quantiles(
             quantiles,
             quantities_to_measure=list(q_to_compute),
-            odds_window=args.odds_window
+            odds_window=args.odds_window,
+            u=float(u_array[idx])
         )
         for q_name, value in results.items():
             d[q_name][i] = value
@@ -673,6 +678,7 @@ def main():
     choices_list = sorted(list(ALL_QUANTITIES) + ['ALL'])
     parser_measure.add_argument('--quantities', type=str.upper, nargs='+', default=['ALL'], choices=choices_list, metavar='QUANTITY', help='List of quantities to measure from the PDFs (default: all).')
     parser_measure.add_argument('--odds-window', type=float, default=DEFAULT_ODDS_WINDOW, help='Half-width of the integration window for odds calculation.')
+    parser_measure.add_argument('--seed', type=int, default=None, help='Seed for the random number generator used in Z_RANDOM.')
     parser_measure.add_argument('--list-quantities', action='store_true', help='List all available quantities and their descriptions.')
                               
     parser_measure.set_defaults(func=measure_logic)
