@@ -2,9 +2,17 @@
 
 ## [1.2.0]
 
+## Fixed
+
+- **Discontinuity in PDF wings.** Interpolation between first two and last two quantiles now uses 
+a power-law instead of a cubic spline, preventing the discontinuity in P(z) that often arised with
+PCHIP interpolation.
+
 ## Added
 
-- New `--seed` argument in `measure` CLI command generates reproducible Z_RANDOM values.
+- **Reproducible Z_RANDOM.** New `--seed` argument in `measure` CLI command generates reproducible Z_RANDOM values.
+
+- **New `combine` command.** Combines two encoded PDFs with different algorithms: average, correlation, or conflation.
 
 ## [1.1.2] - 2026-06-19
 
