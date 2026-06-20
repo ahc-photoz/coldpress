@@ -42,7 +42,18 @@ def _monotone_natural_spline(Xout, X, Y):
         if np.any(mask):
             mask = (idx == i)
             Yout[mask] = pchip(Xout[mask])
-             
+
+    # Use a powerlaw instead of a spline to interpolate the first and last segments.
+    # This prevents the discontinuity in P(z) often found with Pchip.
+    Qstep = 1./(len(X)-1) # step between quantiles
+    infirst = (Xout >= X[0]) & (Xout < X[1])
+    x = (Xout[infirst] - X[0])/(X[1]-X[0]) # normalized variable ranges from 0 to 1
+    Yout[infirst] = Y[0] + Qstep * x**(Yp[1]*(X[1]-X[0])/Qstep)
+    
+    inlast = (Xout > X[-2]) & (Xout <= X[-1])
+    x = (Xout[inlast] - X[-2])/(X[-1] - X[-2])
+    Yout[inlast] = Y[-1] - Qstep * (1-x) ** (Yp[-2]*(X[-1]-X[-2])/Qstep)
+               
     return Yout
     
 def step_pdf_from_quantiles(quantiles):
