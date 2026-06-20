@@ -4,15 +4,19 @@
 import argparse
 import os
 import sys
+import time
 import numpy as np
 from astropy.io import fits
 
 from . import __version__
-from .encode import encode_from_binned, encode_from_density, encode_from_samples
-from .decode import decode_to_binned, decode_to_samples, decode_to_density, decode_quantiles
+from .encode import encode_from_binned, encode_from_density, encode_from_samples, density_to_quantiles, encode_quantiles
+from .decode import decode_to_binned, decode_to_samples, decode_to_density, decode_quantiles, quantiles_to_density
 from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
 from .utils import plot_from_quantiles
 from .constants import Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX
+
+# Compatible trapz function
+trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
 
 # --- Constants for Default Column Names ---
 DEFAULT_ID_COL = 'ID'
@@ -308,6 +312,98 @@ def decode_logic(args):
     
     new_hdu.header.add_history(f'PDFs in column {actual_encoded_name} extracted as {out_column_name}')
     print(f"Writing decompressed data to: {args.output}")
+    new_hdu.writeto(args.output, overwrite=True)
+    print('Done.')
+
+# --- Logic for the 'conflate' command ---
+def conflate_logic(args):
+    """Conflates two coldpress-encoded PDFs into a single encoded PDF.
+
+    Decodes two PDFs into probability densities on a common high-resolution grid,
+    computes their product, normalizes the result, and encodes the resulting
+    conflated distribution back into coldpress format.
+
+    Args:
+        args (argparse.Namespace): Command-line arguments from argparse.
+            Expected attributes:
+            - input (str): Path to the input FITS file.
+            - output (str): Path for the output FITS file.
+            - encoded (list): Two column names containing the input encoded PDFs.
+            - out_conflated (str): Output column name for the conflated PDF.
+            - length (int): Packet length in bytes for encoding.
+            - tolerance (float): Tolerance for validation during encoding.
+    """
+    if args.length % 4 != 0:
+        print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"Opening input file: {args.input}")
+    with fits.open(args.input) as h:
+        hdu = fix_encoded_column(h[1], args.encoded[0])
+        hdu = fix_encoded_column(hdu, args.encoded[1])
+
+        actual_col1 = find_column_name(hdu.columns, args.encoded[0])
+        actual_col2 = find_column_name(hdu.columns, args.encoded[1])
+
+        if actual_col1 is None or actual_col2 is None:
+            print(f"Error: Could not find columns {args.encoded} in '{args.input}'", file=sys.stderr)
+            sys.exit(1)
+
+        qcold1 = hdu.data[actual_col1].astype('>i4')
+        qcold2 = hdu.data[actual_col2].astype('>i4')
+
+        header = hdu.header
+        orig_cols = list(hdu.columns)
+
+    Nsources = qcold1.shape[0]
+    out_encoded = np.zeros((Nsources, args.length // 4), dtype='>i4')
+
+    valid = (np.any(qcold1 != 0, axis=1)) & (np.any(qcold2 != 0, axis=1))
+    valid_indices = np.where(valid)[0]
+
+    print(f"Conflating PDFs for {len(valid_indices)} valid sources...")
+    
+    start = time.process_time()
+
+    for i in valid_indices:
+        q1 = decode_quantiles(qcold1[i].tobytes(), units='redshift')
+        q2 = decode_quantiles(qcold2[i].tobytes(), units='redshift')
+
+        zmin = max(q1[0], q2[0])
+        zmax = min(q1[-1], q2[-1])
+
+        if zmax > zmin:
+            # Finely resample in common overlap range
+            z_grid = np.linspace(zmin, zmax, 1000)
+            p1 = quantiles_to_density(q1, zvector=z_grid, method='spline', force_range=True)
+            p2 = quantiles_to_density(q2, zvector=z_grid, method='spline', force_range=True)
+
+            c = p1 * p2
+            area = trapz(c, z_grid)
+
+            if area > 0:
+                c /= area
+                Nq = args.length - 8
+                while Nq >= args.length / 3:
+                    q_c = density_to_quantiles(z_grid, c, Nquantiles=Nq)
+                    try:
+                        _, enc_packet = encode_quantiles(q_c, packetsize=args.length, tolerance=args.tolerance, validate=True, units='redshift')
+                        out_encoded[i] = np.frombuffer(enc_packet, dtype='>i4')
+                        break
+                    except ValueError:
+                        Nq -= 2
+
+    cpu_seconds = time.process_time() - start
+    print(f"PDFs conflated in {cpu_seconds:.6f} CPU seconds")
+
+    new_col = fits.Column(name=args.out_conflated, format=f'{args.length // 4}J', array=out_encoded)
+    final_cols = [c for c in orig_cols if c.name.upper() != args.out_conflated.upper()]
+    final_cols.append(new_col)
+
+    new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
+    new_hdu.header.add_history(f'Conflated {actual_col1} and {actual_col2} into {args.out_conflated}')
+
+    print(f"Writing output to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
 
@@ -647,7 +743,7 @@ def main():
     parser_encode.add_argument('--validate', action='store_true', default=False, help='Verify accuracy of recovered quantiles.')
     parser_encode.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
     parser_encode.add_argument('--keep-orig', action='store_true', help='Include the original input column with binned PDFs or samples in the output file.')
-    parser_encode.add_argument('--clip-fraction', type=float, nargs='?', default=0, help='Fraction of samples to clip out at the extremes of the redshift range.')
+    parser_encode.add_argument('--clip-fraction', type=float, nargs='?', default=0, help='Fraction of samples to be clipped out at the extremes of the redshift range.')
     parser_encode.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_encode.set_defaults(func=encode_logic)
 
@@ -669,6 +765,16 @@ def main():
     parser_decode.add_argument('--method', type=str, nargs='?', default='linear', choices=['linear','spline'], help='Interpolation method for PDF reconstruction (default: linear).')
     parser_decode.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_decode.set_defaults(func=decode_logic)
+
+    # --- Parser for the "conflate" command ---
+    parser_conflate = subparsers.add_parser('conflate', help='Conflate two coldpress-encoded PDFs.')
+    parser_conflate.add_argument('input', metavar='input.fits', type=str, help='Name of input FITS file.')
+    parser_conflate.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS file.')
+    parser_conflate.add_argument('--encoded', type=str, nargs=2, required=True, help='Names of the two input columns containing encoded PDFs.')
+    parser_conflate.add_argument('-o', '--out-conflated', dest='out_conflated', type=str, required=True, help='Name of output column containing the conflated PDF.')
+    parser_conflate.add_argument('--length', type=int, nargs='?', default=DEFAULT_PACKET_LENGTH, help='Length of compressed PDFs in bytes (must be multiple of 4).')
+    parser_conflate.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
+    parser_conflate.set_defaults(func=conflate_logic)
 
     # --- Parser for the "measure" command ---
     parser_measure = subparsers.add_parser('measure', help='Compute point estimates from compressed PDFs.')
