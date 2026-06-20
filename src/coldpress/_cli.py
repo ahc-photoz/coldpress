@@ -327,22 +327,27 @@ def combine_logic(args):
             - conflate (list, optional): Two column names for conflation.
             - average (list, optional): Two column names for averaging.
             - correlate (list, optional): Two column names for correlation.
-            - out_combined (str): Output column name for the combined PDF.
+            - out_combined (str, optional): Output column name for the combined PDF.
             - length (int): Packet length in bytes for encoding.
             - tolerance (float): Tolerance for validation during encoding.
     """
     if args.conflate:
         method = 'conflate'
         encoded_cols = args.conflate
+        default_out = 'CONFLATED_PDF'
     elif args.average:
         method = 'average'
         encoded_cols = args.average
+        default_out = 'AVERAGE_PDF'
     elif args.correlate:
         method = 'correlate'
         encoded_cols = args.correlate
+        default_out = 'CORR_PVALUE'
     else:
         print("Error: No combination method specified.", file=sys.stderr)
         sys.exit(1)
+
+    out_combined_col = args.out_combined if args.out_combined else default_out
 
     if args.length % 4 != 0:
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
@@ -397,17 +402,17 @@ def combine_logic(args):
     cpu_seconds = time.process_time() - start
     print(f"PDFs combined in {cpu_seconds:.6f} CPU seconds")
 
-    new_col = fits.Column(name=args.out_combined, format=fits_format, array=out_data)
-    final_cols = [c for c in orig_cols if c.name.upper() != args.out_combined.upper()]
+    new_col = fits.Column(name=out_combined_col, format=fits_format, array=out_data)
+    final_cols = [c for c in orig_cols if c.name.upper() != out_combined_col.upper()]
     final_cols.append(new_col)
 
     new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    new_hdu.header.add_history(f'Combined ({method}) {actual_col1} and {actual_col2} into {args.out_combined}')
+    new_hdu.header.add_history(f'Combined ({method}) {actual_col1} and {actual_col2} into {out_combined_col}')
 
     print(f"Writing output to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
-    
+
 # --- Logic for the 'measure' command ---
 def measure_logic(args):
     """Computes point-estimate statistics from compressed PDFs.
@@ -777,7 +782,7 @@ def main():
     combine_group.add_argument('--average', type=str, nargs=2, metavar=('COL1', 'COL2'), help='Average two PDFs.')
     combine_group.add_argument('--correlate', type=str, nargs=2, metavar=('COL1', 'COL2'), help='Correlate two PDFs.')
     
-    parser_combine.add_argument('-o', '--out-combined', dest='out_combined', type=str, required=True, help='Name of output column containing the combined PDF.')
+    parser_combine.add_argument('-o', '--out-combined', dest='out_combined', type=str, help='Name of output column containing the combined PDF or p-value (defaults depend on method).')
     parser_combine.add_argument('--length', type=int, nargs='?', default=DEFAULT_PACKET_LENGTH, help='Length of compressed PDFs in bytes (must be multiple of 4).')
     parser_combine.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
     parser_combine.set_defaults(func=combine_logic)
