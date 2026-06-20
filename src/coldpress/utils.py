@@ -182,3 +182,66 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
         plt.tight_layout()            
         plt.savefig(output_filename)
         plt.close()
+
+def combine_pdfs(packet1, packet2, method='conflate', length=80, tolerance=0.001):
+    """Combines two coldpress-encoded PDFs into a single encoded PDF.
+
+    Decodes two PDFs into probability densities, combines them using the
+    specified method ('conflate', 'average', 'correlate'), normalizes,
+    and encodes the result.
+
+    Args:
+        packet1 (bytes): Byte packet of the first PDF.
+        packet2 (bytes): Byte packet of the second PDF.
+        method (str): Combination method ('conflate', 'average', 'correlate').
+        length (int): Packet length in bytes for encoding.
+        tolerance (float): Tolerance for validation during encoding.
+
+    Returns:
+        np.ndarray or None: A 1D >i4 array representing the encoded combined PDF,
+            or None if conditions for combination fail (e.g. no overlap for conflation).
+    """
+    from .decode import decode_quantiles, quantiles_to_density
+    from .encode import density_to_quantiles, encode_quantiles
+
+    trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
+
+    q1 = decode_quantiles(packet1, units='redshift')
+    q2 = decode_quantiles(packet2, units='redshift')
+
+    if method == 'conflate':
+        zmin = max(q1[0], q2[0])
+        zmax = min(q1[-1], q2[-1])
+    else:
+        zmin = min(q1[0], q2[0])
+        zmax = max(q1[-1], q2[-1])
+
+    if zmax <= zmin and method == 'conflate':
+        return None
+
+    z_grid = np.linspace(zmin, zmax, 1000)
+    p1 = quantiles_to_density(q1, zvector=z_grid, method='spline', force_range=True)
+    p2 = quantiles_to_density(q2, zvector=z_grid, method='spline', force_range=True)
+
+    if method == 'conflate':
+        c = p1 * p2
+    elif method == 'average':
+        c = 0.5 * (p1 + p2)
+    elif method == 'correlate':
+        c = np.correlate(p1, p2, mode='same')
+    else:
+        raise ValueError(f"Unknown combination method: {method}")
+
+    area = trapz(c, z_grid)
+    if area > 0:
+        c /= area
+        Nq = length - 8
+        while Nq >= length / 3:
+            q_c = density_to_quantiles(z_grid, c, Nquantiles=Nq)
+            try:
+                _, enc_packet = encode_quantiles(q_c, packetsize=length, tolerance=tolerance, validate=True, units='redshift')
+                return np.frombuffer(enc_packet, dtype='>i4')
+            except ValueError:
+                Nq -= 2
+
+    return None

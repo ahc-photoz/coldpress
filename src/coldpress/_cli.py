@@ -12,7 +12,7 @@ from . import __version__
 from .encode import encode_from_binned, encode_from_density, encode_from_samples, density_to_quantiles, encode_quantiles
 from .decode import decode_to_binned, decode_to_samples, decode_to_density, decode_quantiles, quantiles_to_density
 from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
-from .utils import plot_from_quantiles
+from .utils import plot_from_quantiles, combine_pdfs
 from .constants import Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX
 
 # Compatible trapz function
@@ -315,38 +315,49 @@ def decode_logic(args):
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
 
-# --- Logic for the 'conflate' command ---
-def conflate_logic(args):
-    """Conflates two coldpress-encoded PDFs into a single encoded PDF.
-
-    Decodes two PDFs into probability densities on a common high-resolution grid,
-    computes their product, normalizes the result, and encodes the resulting
-    conflated distribution back into coldpress format.
+# --- Logic for the 'combine' command ---
+def combine_logic(args):
+    """Combines two coldpress-encoded PDFs into a single encoded PDF.
 
     Args:
         args (argparse.Namespace): Command-line arguments from argparse.
             Expected attributes:
             - input (str): Path to the input FITS file.
             - output (str): Path for the output FITS file.
-            - encoded (list): Two column names containing the input encoded PDFs.
-            - out_conflated (str): Output column name for the conflated PDF.
+            - conflate (list, optional): Two column names for conflation.
+            - average (list, optional): Two column names for averaging.
+            - correlate (list, optional): Two column names for correlation.
+            - out_combined (str): Output column name for the combined PDF.
             - length (int): Packet length in bytes for encoding.
             - tolerance (float): Tolerance for validation during encoding.
     """
+    if args.conflate:
+        method = 'conflate'
+        encoded_cols = args.conflate
+    elif args.average:
+        method = 'average'
+        encoded_cols = args.average
+    elif args.correlate:
+        method = 'correlate'
+        encoded_cols = args.correlate
+    else:
+        print("Error: No combination method specified.", file=sys.stderr)
+        sys.exit(1)
+
     if args.length % 4 != 0:
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
         sys.exit(1)
 
     print(f"Opening input file: {args.input}")
     with fits.open(args.input) as h:
-        hdu = fix_encoded_column(h[1], args.encoded[0])
-        hdu = fix_encoded_column(hdu, args.encoded[1])
+        hdu = fix_encoded_column(h[1], encoded_cols[0])
+        hdu = fix_encoded_column(hdu, encoded_cols[1])
 
-        actual_col1 = find_column_name(hdu.columns, args.encoded[0])
-        actual_col2 = find_column_name(hdu.columns, args.encoded[1])
+        actual_col1 = find_column_name(hdu.columns, encoded_cols[0])
+        actual_col2 = find_column_name(hdu.columns, encoded_cols[1])
 
         if actual_col1 is None or actual_col2 is None:
-            print(f"Error: Could not find columns {args.encoded} in '{args.input}'", file=sys.stderr)
+            print(f"Error: Could not find columns {encoded_cols} in '{args.input}'", file=sys.stderr)
             sys.exit(1)
 
         qcold1 = hdu.data[actual_col1].astype('>i4')
@@ -361,47 +372,30 @@ def conflate_logic(args):
     valid = (np.any(qcold1 != 0, axis=1)) & (np.any(qcold2 != 0, axis=1))
     valid_indices = np.where(valid)[0]
 
-    print(f"Conflating PDFs for {len(valid_indices)} valid sources...")
+    print(f"Combining PDFs ({method}) for {len(valid_indices)} valid sources...")
     
     start = time.process_time()
 
     for i in valid_indices:
-        q1 = decode_quantiles(qcold1[i].tobytes(), units='redshift')
-        q2 = decode_quantiles(qcold2[i].tobytes(), units='redshift')
-
-        zmin = max(q1[0], q2[0])
-        zmax = min(q1[-1], q2[-1])
-
-        if zmax > zmin:
-            # Finely resample in common overlap range
-            z_grid = np.linspace(zmin, zmax, 1000)
-            p1 = quantiles_to_density(q1, zvector=z_grid, method='spline', force_range=True)
-            p2 = quantiles_to_density(q2, zvector=z_grid, method='spline', force_range=True)
-
-            c = p1 * p2
-            area = trapz(c, z_grid)
-
-            if area > 0:
-                c /= area
-                Nq = args.length - 8
-                while Nq >= args.length / 3:
-                    q_c = density_to_quantiles(z_grid, c, Nquantiles=Nq)
-                    try:
-                        _, enc_packet = encode_quantiles(q_c, packetsize=args.length, tolerance=args.tolerance, validate=True, units='redshift')
-                        out_encoded[i] = np.frombuffer(enc_packet, dtype='>i4')
-                        break
-                    except ValueError:
-                        Nq -= 2
+        enc_packet = combine_pdfs(
+            qcold1[i].tobytes(),
+            qcold2[i].tobytes(),
+            method=method,
+            length=args.length,
+            tolerance=args.tolerance
+        )
+        if enc_packet is not None:
+            out_encoded[i] = enc_packet
 
     cpu_seconds = time.process_time() - start
-    print(f"PDFs conflated in {cpu_seconds:.6f} CPU seconds")
+    print(f"PDFs combined in {cpu_seconds:.6f} CPU seconds")
 
-    new_col = fits.Column(name=args.out_conflated, format=f'{args.length // 4}J', array=out_encoded)
-    final_cols = [c for c in orig_cols if c.name.upper() != args.out_conflated.upper()]
+    new_col = fits.Column(name=args.out_combined, format=f'{args.length // 4}J', array=out_encoded)
+    final_cols = [c for c in orig_cols if c.name.upper() != args.out_combined.upper()]
     final_cols.append(new_col)
 
     new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    new_hdu.header.add_history(f'Conflated {actual_col1} and {actual_col2} into {args.out_conflated}')
+    new_hdu.header.add_history(f'Combined ({method}) {actual_col1} and {actual_col2} into {args.out_combined}')
 
     print(f"Writing output to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
@@ -766,15 +760,20 @@ def main():
     parser_decode.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_decode.set_defaults(func=decode_logic)
 
-    # --- Parser for the "conflate" command ---
-    parser_conflate = subparsers.add_parser('conflate', help='Conflate two coldpress-encoded PDFs.')
-    parser_conflate.add_argument('input', metavar='input.fits', type=str, help='Name of input FITS file.')
-    parser_conflate.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS file.')
-    parser_conflate.add_argument('--encoded', type=str, nargs=2, required=True, help='Names of the two input columns containing encoded PDFs.')
-    parser_conflate.add_argument('-o', '--out-conflated', dest='out_conflated', type=str, required=True, help='Name of output column containing the conflated PDF.')
-    parser_conflate.add_argument('--length', type=int, nargs='?', default=DEFAULT_PACKET_LENGTH, help='Length of compressed PDFs in bytes (must be multiple of 4).')
-    parser_conflate.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
-    parser_conflate.set_defaults(func=conflate_logic)
+    # --- Parser for the "combine" command ---
+    parser_combine = subparsers.add_parser('combine', help='Combine two coldpress-encoded PDFs.')
+    parser_combine.add_argument('input', metavar='input.fits', type=str, help='Name of input FITS file.')
+    parser_combine.add_argument('output', metavar='output.fits', type=str, help='Name of output FITS file.')
+    
+    combine_group = parser_combine.add_mutually_exclusive_group(required=True)
+    combine_group.add_argument('--conflate', type=str, nargs=2, metavar=('COL1', 'COL2'), help='Conflate two PDFs.')
+    combine_group.add_argument('--average', type=str, nargs=2, metavar=('COL1', 'COL2'), help='Average two PDFs.')
+    combine_group.add_argument('--correlate', type=str, nargs=2, metavar=('COL1', 'COL2'), help='Correlate two PDFs.')
+    
+    parser_combine.add_argument('-o', '--out-combined', dest='out_combined', type=str, required=True, help='Name of output column containing the combined PDF.')
+    parser_combine.add_argument('--length', type=int, nargs='?', default=DEFAULT_PACKET_LENGTH, help='Length of compressed PDFs in bytes (must be multiple of 4).')
+    parser_combine.add_argument('--tolerance', type=float, nargs='?', default=DEFAULT_TOLERANCE, help='Maximum shift tolerated for the redshift of the quantiles.')
+    parser_combine.set_defaults(func=combine_logic)
 
     # --- Parser for the "measure" command ---
     parser_measure = subparsers.add_parser('measure', help='Compute point estimates from compressed PDFs.')
