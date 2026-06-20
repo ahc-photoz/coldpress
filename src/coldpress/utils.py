@@ -198,8 +198,9 @@ def combine_pdfs(packet1, packet2, method='conflate', length=80, tolerance=0.001
         tolerance (float): Tolerance for validation during encoding.
 
     Returns:
-        np.ndarray or None: A 1D >i4 array representing the encoded combined PDF,
-            or None if conditions for combination fail (e.g. no overlap for conflation).
+        np.ndarray or float or None: A 1D >i4 array representing the encoded combined PDF,
+            a float representing the p-value if method is 'correlate', or None if 
+            conditions for combination fail (e.g. no overlap for conflation).
     """
     from .decode import decode_quantiles, quantiles_to_density
     from .encode import density_to_quantiles, encode_quantiles
@@ -228,7 +229,12 @@ def combine_pdfs(packet1, packet2, method='conflate', length=80, tolerance=0.001
     elif method == 'average':
         c = 0.5 * (p1 + p2)
     elif method == 'correlate':
-        c = np.correlate(p1, p2, mode='same')
+        c = np.correlate(p1, p2, mode='full')
+        # Center of mode='full' for two equal-length arrays is len(p2) - 1
+        lag_zero_idx = len(p2) - 1
+        p_0 = c[lag_zero_idx]
+        # Calculate p-value by summing the probability mass in the tails where density <= p(delta_z=0)
+        return float(np.sum(c[c <= p_0]) / np.sum(c))
     else:
         raise ValueError(f"Unknown combination method: {method}")
 

@@ -367,7 +367,14 @@ def combine_logic(args):
         orig_cols = list(hdu.columns)
 
     Nsources = qcold1.shape[0]
-    out_encoded = np.zeros((Nsources, args.length // 4), dtype='>i4')
+
+    # Initialize the correct FITS column data type based on the combination method
+    if method == 'correlate':
+        out_data = np.full(Nsources, np.nan, dtype=np.float32)
+        fits_format = 'E'
+    else:
+        out_data = np.zeros((Nsources, args.length // 4), dtype='>i4')
+        fits_format = f'{args.length // 4}J'
 
     valid = (np.any(qcold1 != 0, axis=1)) & (np.any(qcold2 != 0, axis=1))
     valid_indices = np.where(valid)[0]
@@ -377,20 +384,20 @@ def combine_logic(args):
     start = time.process_time()
 
     for i in valid_indices:
-        enc_packet = combine_pdfs(
+        result = combine_pdfs(
             qcold1[i].tobytes(),
             qcold2[i].tobytes(),
             method=method,
             length=args.length,
             tolerance=args.tolerance
         )
-        if enc_packet is not None:
-            out_encoded[i] = enc_packet
+        if result is not None:
+            out_data[i] = result
 
     cpu_seconds = time.process_time() - start
     print(f"PDFs combined in {cpu_seconds:.6f} CPU seconds")
 
-    new_col = fits.Column(name=args.out_combined, format=f'{args.length // 4}J', array=out_encoded)
+    new_col = fits.Column(name=args.out_combined, format=fits_format, array=out_data)
     final_cols = [c for c in orig_cols if c.name.upper() != args.out_combined.upper()]
     final_cols.append(new_col)
 
@@ -400,7 +407,7 @@ def combine_logic(args):
     print(f"Writing output to: {args.output}")
     new_hdu.writeto(args.output, overwrite=True)
     print('Done.')
-
+    
 # --- Logic for the 'measure' command ---
 def measure_logic(args):
     """Computes point-estimate statistics from compressed PDFs.
