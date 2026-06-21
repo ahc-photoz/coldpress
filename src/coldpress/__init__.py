@@ -55,7 +55,17 @@ from .stats import (
     odds_from_quantiles,
     HPDCI_from_quantiles,
 )
-from .utils import step_pdf_from_quantiles, plot_from_quantiles
+from .utils import (
+    step_pdf_from_quantiles,
+    plot_from_quantiles,
+    combine_pdfs
+)
+from .io import (
+    find_column_name,
+    fix_encoded_column,
+    process_fits_table,
+    print_fits_info
+)
 
 __all__ = [
     'binned_to_quantiles',
@@ -81,5 +91,10 @@ __all__ = [
     'odds_from_quantiles',
     'HPDCI_from_quantiles',
     'step_pdf_from_quantiles',
-    'plot_from_quantiles'
+    'plot_from_quantiles',
+    'combine_pdfs',
+    'find_column_name',
+    'fix_encoded_column',
+    'process_fits_table',
+    'print_fits_info'
 ]
