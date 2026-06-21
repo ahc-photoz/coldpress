@@ -25,3 +25,12 @@ Q0_ZMAX = exp(LOG_DZ*(256**2-1) - NEGATIVE_Z_OFFSET) - 1
 
 # Maximum zeta for first quantile that can be encoded
 Q0_ZETAMAX = LOG_DZ*(256**2-1) - NEGATIVE_Z_OFFSET
+
+# --- Constants for Default Column Names ---
+DEFAULT_ID_COL = 'ID'
+DEFAULT_ENCODED_COL = 'COLDPRESS_PDF'
+
+# --- Constants for numeric parameter values ---
+DEFAULT_PACKET_LENGTH = 80
+DEFAULT_TOLERANCE = 0.001
+DEFAULT_ODDS_WINDOW = 0.03

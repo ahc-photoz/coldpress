@@ -13,89 +13,17 @@ from .encode import encode_from_binned, encode_from_density, encode_from_samples
 from .decode import decode_to_binned, decode_to_samples, decode_to_density, decode_quantiles, quantiles_to_density
 from .stats import measure_from_quantiles, ALL_QUANTITIES, QUANTITY_DESCRIPTIONS
 from .utils import plot_from_quantiles, combine_pdfs
-from .constants import Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX
+from .constants import (
+    Q0_ZMIN, Q0_ZMAX, Q0_ZETAMIN, Q0_ZETAMAX,
+    DEFAULT_ID_COL, DEFAULT_ENCODED_COL,
+    DEFAULT_PACKET_LENGTH, DEFAULT_TOLERANCE, DEFAULT_ODDS_WINDOW
+)
+from .io import find_column_name, fix_encoded_column, process_fits_table
 
 # Compatible trapz function
 trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
 
-# --- Constants for Default Column Names ---
-DEFAULT_ID_COL = 'ID'
-DEFAULT_ENCODED_COL = 'COLDPRESS_PDF'
 
-# --- Constants for numeric parameter values ---
-DEFAULT_PACKET_LENGTH = 80
-DEFAULT_TOLERANCE = 0.001
-DEFAULT_ODDS_WINDOW = 0.03
-
-
-def find_column_name(columns, name):
-    """
-    Finds the actual name of a column in a FITS table, case-insensitively.
-
-    Args:
-        columns (astropy.io.fits.column.ColDefs): The column definitions object.
-        name (str): The case-insensitive name to find.
-
-    Returns:
-        str or None: The actual column name if found, otherwise None.
-    """
-    if name is None:
-        return None
-    names_upper = [c.name.upper() for c in columns]
-    name_upper = name.upper()
-    try:
-        idx = names_upper.index(name_upper)
-        return columns[idx].name
-    except ValueError:
-        return None
-
-
-def fix_encoded_column(hdu, colname):
-    """
-    Check if the column colname has variable length and if so recreate the entire HDU
-    with a fixed length version of the column.
-    """
-    actual_colname = find_column_name(hdu.columns, colname)
-    if actual_colname is None:
-        print(f"Error: column {colname} not found in input table. List of columns found:")
-        print(hdu.columns.names)
-        sys.exit(1)
-        
-    # astropy treats variable-length array columns as objects, not 2D arrays
-    if hdu.data[actual_colname].dtype == 'object':
-        
-        # Create the corrected NumPy array from the problematic column
-        qcold = hdu.data[actual_colname]
-        lengths = np.array([len(x) for x in qcold])
-        maxlength = np.max(lengths)
-        if maxlength == 0:
-            print(f"Error: All rows contain NULL values in column '{actual_colname}'.")
-            sys.exit(1)
-    
-        qcold_fixed = np.zeros((lengths.shape[0],maxlength),dtype='>i4') # ensure integers are big-endian
-        valid_indices = np.where(lengths == maxlength)[0]
-        for i in valid_indices:
-            qcold_fixed[i] = qcold[i]
-                       
-        # Create a new, fixed-width FITS Column object
-        new_format = f'{qcold_fixed.shape[1]}J'
-        new_column = fits.Column(name=actual_colname, format=new_format, array=qcold_fixed)
-        
-        print(f"Warning: column '{actual_colname}' converted from variable-length to fixed-length format.")
-
-        # Replace the old column definition in the list of columns
-        original_columns = list(hdu.columns)
-        col_idx = [i for i, col in enumerate(original_columns) if col.name == actual_colname][0]
-        original_columns[col_idx] = new_column
-        
-        # Return a new HDU built from the corrected column list
-        return fits.BinTableHDU.from_columns(original_columns, header=hdu.header)
-    
-    # If no fix is needed, return the original HDU
-    return hdu 
- 
- 
- 
 # --- Logic for the 'info' command ---
 def info_logic(args):
     """Displays metadata about a FITS file.
@@ -177,66 +105,44 @@ def encode_logic(args):
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Opening input file: {args.input}")
+    orig_column = args.samples or args.binned or args.density        
 
-    with fits.open(args.input) as h:
-        header = h[1].header
-        orig_cols = list(h[1].columns)
-        
-        # verify the column containing de PDFs to be encoded:
-        orig_column = args.samples or args.binned or args.density        
-        actual_orig_column = find_column_name(h[1].columns, orig_column)
-        if actual_orig_column is None:
-            print(f"Error: column '{orig_column}' not found in '{args.input}'", file=sys.stderr)
-            sys.exit(1)
+    # define range of independent variable:                
+    if args.units == 'redshift':
+        xrange = [args.zmin, args.zmax]
+    elif args.units == 'zeta':
+        xrange = [args.zetamin, args.zetamax]
 
-        # define range of independent variable:                
-        if args.units == 'redshift':
-            xrange = [args.zmin, args.zmax]
-        elif args.units == 'zeta':
-            xrange = [args.zetamin, args.zetamax]
+    def encode_callback(data_arrays, actual_names, **kwargs):
+        actual_orig_column = actual_names[orig_column]
+        data = data_arrays[orig_column]
 
         if args.samples is not None:
-            history = f'PDFs from samples in column {actual_orig_column} cold-pressed as {args.out_encoded}'
             print(f"Generating quantiles from random samples and compressing into {args.length}-byte packets...")
-            
-            samples = h[1].data[actual_orig_column]
-            coldpress_PDF = encode_from_samples(samples, packetsize=args.length, ini_quantiles=args.length-8, 
+            coldpress_PDF = encode_from_samples(data, packetsize=args.length, ini_quantiles=args.length-8, 
                                                 validate=args.validate, tolerance=args.tolerance, clip_fraction=args.clip_fraction, 
                                                 clip_range=xrange, units=args.units) 
-     
         else:
-            history = f'PDFs in column {actual_orig_column} cold-pressed as {args.out_encoded}'
-            PDF = h[1].data[actual_orig_column]
-            zvector = np.linspace(xrange[0], xrange[1], PDF.shape[1])
-            cratio = PDF.shape[1]*PDF.itemsize/args.length
-            
+            zvector = np.linspace(xrange[0], xrange[1], data.shape[1])
             if args.binned is not None:
-               coldpress_PDF = encode_from_binned(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+               coldpress_PDF = encode_from_binned(data, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
                                                   validate=args.validate, tolerance=args.tolerance, units=args.units)
             elif args.density is not None:
-               coldpress_PDF = encode_from_density(PDF, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
+               coldpress_PDF = encode_from_density(data, zvector, packetsize=args.length, ini_quantiles=args.length-8, 
                                                    validate=args.validate, tolerance=args.tolerance, units=args.units)
                       
-                                                                                               
         nints = args.length // 4
-        new_col = fits.Column(name=args.out_encoded, format=f'{nints}J', array=coldpress_PDF)
+        return {args.out_encoded: (f'{nints}J', coldpress_PDF)}
 
-        final_cols = [c for c in orig_cols if c.name.upper() != args.out_encoded.upper()]
-              
-        if args.keep_orig:
-            print(f"Including column '{actual_orig_column}' in output FITS table.")
-        else:
-            final_cols = [c for c in final_cols if c.name.upper() != actual_orig_column.upper()]
-            print(f"Excluding column '{actual_orig_column}' from output FITS table.")
+    drop_cols = [args.out_encoded]
+    if not args.keep_orig:
+        drop_cols.append(orig_column)
+        print(f"Excluding column '{orig_column}' from output FITS table.")
+    else:
+        print(f"Including column '{orig_column}' in output FITS table.")
 
-        final_cols.append(new_col)
-        new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-
-    new_hdu.header.add_history(history)
-    print(f"Writing compressed data to: {args.output}")
-    new_hdu.writeto(args.output, overwrite=True)
-    print('Done.')
+    history = f"PDFs from column {orig_column} cold-pressed as {args.out_encoded}"
+    process_fits_table(args.input, args.output, [orig_column], drop_cols, history, encode_callback)
 
 
 # --- Logic for the 'decode' command ---
@@ -267,34 +173,26 @@ def decode_logic(args):
                "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).
           
     """
-    
-    print(f"Opening input file: {args.input}")
+    # define range of independent variable:                
+    if args.units == 'redshift':
+        xrange = [args.zmin, args.zmax]
+    elif args.units == 'zeta':
+        xrange = [args.zetamin, args.zetamax]
 
-    with fits.open(args.input) as h:
-        # Fix the HDU in memory if necessary
-        hdu = fix_encoded_column(h[1], args.encoded)
-        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
-        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
+    out_column_name = args.binned or args.density or args.samples
 
-        header = hdu.header
-        orig_cols = list(hdu.columns)
-
-        # define range of independent variable:                
-        if args.units == 'redshift':
-            xrange = [args.zmin, args.zmax]
-        elif args.units == 'zeta':
-            xrange = [args.zetamin, args.zetamax]
-
+    def decode_callback(data_arrays, actual_names, **kwargs):
+        # ensure array is big-endian
+        qcold = data_arrays[args.encoded].astype('>i4') 
+        
         if args.binned or args.density:
             zvector = np.linspace(xrange[0], xrange[1], args.nvalues)
                 
             print(f"Decompressing PDFs using {args.method} interpolation of the quantiles...")
             try:
                 if args.binned:
-                    out_column_name = args.binned
                     decoded_PDF = decode_to_binned(qcold, zvector, force_range=args.force_range, method=args.method, units=args.units)
                 if args.density:
-                    out_column_name = args.density
                     decoded_PDF = decode_to_density(qcold, zvector, force_range=args.force_range, method=args.method, units=args.units)                
             except ValueError as e:
                 print(f"Error: {e}", file=sys.stderr)
@@ -302,18 +200,13 @@ def decode_logic(args):
                 sys.exit(1)
 
         elif args.samples:
-            out_column_name = args.samples
             decoded_PDF = decode_to_samples(qcold, Nsamples=args.nvalues, method=args.method, units=args.units)
 
-        new_col = fits.Column(name=out_column_name, format=f'{args.nvalues}E', array=decoded_PDF)
-        final_cols = [c for c in orig_cols if c.name.upper() != out_column_name.upper()]
-        final_cols.append(new_col)
-        new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    
-    new_hdu.header.add_history(f'PDFs in column {actual_encoded_name} extracted as {out_column_name}')
-    print(f"Writing decompressed data to: {args.output}")
-    new_hdu.writeto(args.output, overwrite=True)
-    print('Done.')
+        return {out_column_name: (f'{args.nvalues}E', decoded_PDF)}
+
+    history = f"PDFs in column {args.encoded} extracted as {out_column_name}"
+    process_fits_table(args.input, args.output, [args.encoded], [out_column_name], history, decode_callback)
+
 
 # --- Logic for the 'combine' command ---
 def combine_logic(args):
@@ -353,65 +246,45 @@ def combine_logic(args):
         print(f"Error: Packet length (--length) must be a multiple of 4, but got {args.length}.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Opening input file: {args.input}")
-    with fits.open(args.input) as h:
-        hdu = fix_encoded_column(h[1], encoded_cols[0])
-        hdu = fix_encoded_column(hdu, encoded_cols[1])
+    def combine_callback(data_arrays, actual_names, **kwargs):
+        qcold1 = data_arrays[encoded_cols[0]].astype('>i4')
+        qcold2 = data_arrays[encoded_cols[1]].astype('>i4')
+        Nsources = qcold1.shape[0]
 
-        actual_col1 = find_column_name(hdu.columns, encoded_cols[0])
-        actual_col2 = find_column_name(hdu.columns, encoded_cols[1])
+        # Initialize the correct FITS column data type based on the combination method
+        if method == 'correlate':
+            out_data = np.full(Nsources, np.nan, dtype=np.float32)
+            fits_format = 'E'
+        else:
+            out_data = np.zeros((Nsources, args.length // 4), dtype='>i4')
+            fits_format = f'{args.length // 4}J'
 
-        if actual_col1 is None or actual_col2 is None:
-            print(f"Error: Could not find columns {encoded_cols} in '{args.input}'", file=sys.stderr)
-            sys.exit(1)
+        valid = (np.any(qcold1 != 0, axis=1)) & (np.any(qcold2 != 0, axis=1))
+        valid_indices = np.where(valid)[0]
 
-        qcold1 = hdu.data[actual_col1].astype('>i4')
-        qcold2 = hdu.data[actual_col2].astype('>i4')
+        print(f"Combining PDFs ({method}) for {len(valid_indices)} valid sources...")
+        
+        start = time.process_time()
 
-        header = hdu.header
-        orig_cols = list(hdu.columns)
+        for i in valid_indices:
+            result = combine_pdfs(
+                qcold1[i].tobytes(),
+                qcold2[i].tobytes(),
+                method=method,
+                length=args.length,
+                tolerance=args.tolerance
+            )
+            if result is not None:
+                out_data[i] = result
 
-    Nsources = qcold1.shape[0]
+        cpu_seconds = time.process_time() - start
+        print(f"PDFs combined in {cpu_seconds:.6f} CPU seconds")
 
-    # Initialize the correct FITS column data type based on the combination method
-    if method == 'correlate':
-        out_data = np.full(Nsources, np.nan, dtype=np.float32)
-        fits_format = 'E'
-    else:
-        out_data = np.zeros((Nsources, args.length // 4), dtype='>i4')
-        fits_format = f'{args.length // 4}J'
+        return {out_combined_col: (fits_format, out_data)}
 
-    valid = (np.any(qcold1 != 0, axis=1)) & (np.any(qcold2 != 0, axis=1))
-    valid_indices = np.where(valid)[0]
+    history = f"Combined ({method}) {encoded_cols[0]} and {encoded_cols[1]} into {out_combined_col}"
+    process_fits_table(args.input, args.output, encoded_cols, [out_combined_col], history, combine_callback)
 
-    print(f"Combining PDFs ({method}) for {len(valid_indices)} valid sources...")
-    
-    start = time.process_time()
-
-    for i in valid_indices:
-        result = combine_pdfs(
-            qcold1[i].tobytes(),
-            qcold2[i].tobytes(),
-            method=method,
-            length=args.length,
-            tolerance=args.tolerance
-        )
-        if result is not None:
-            out_data[i] = result
-
-    cpu_seconds = time.process_time() - start
-    print(f"PDFs combined in {cpu_seconds:.6f} CPU seconds")
-
-    new_col = fits.Column(name=out_combined_col, format=fits_format, array=out_data)
-    final_cols = [c for c in orig_cols if c.name.upper() != out_combined_col.upper()]
-    final_cols.append(new_col)
-
-    new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    new_hdu.header.add_history(f'Combined ({method}) {actual_col1} and {actual_col2} into {out_combined_col}')
-
-    print(f"Writing output to: {args.output}")
-    new_hdu.writeto(args.output, overwrite=True)
-    print('Done.')
 
 # --- Logic for the 'measure' command ---
 def measure_logic(args):
@@ -433,62 +306,44 @@ def measure_logic(args):
             - odds_window (float): Half-width for the odds calculation.
             - seed (int, optional): Seed for random number generation.
     """
-
-    print(f"Opening input file: {args.input}")
-    with fits.open(args.input) as h:
-        # Fix the HDU in memory if necessary
-        hdu = fix_encoded_column(h[1], args.encoded)
-        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
-        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
-
-        header = hdu.header
-        orig_cols = list(hdu.columns)
-
-    Nsources = qcold.shape[0]
-    
     q_to_compute = {q.upper() for q in args.quantities}
     if 'ALL' in q_to_compute:
         q_to_compute = ALL_QUANTITIES
     
     print(f"Will compute: {', '.join(sorted(list(q_to_compute)))}")
 
-    d = {}
-    for q_name in q_to_compute:
-         d[q_name] = np.full(Nsources, np.nan, dtype=np.float32)
+    def measure_callback(data_arrays, actual_names, **kwargs):
+        # ensure array is big-endian
+        qcold = data_arrays[args.encoded].astype('>i4') 
+        Nsources = qcold.shape[0]
+        
+        d = {}
+        for q_name in q_to_compute:
+             d[q_name] = np.full(Nsources, np.nan, dtype=np.float32)
 
-    valid = np.any(qcold != 0, axis=1)
-    valid_indices = np.where(valid)[0]
-    print(f"Calculating point estimates for {len(valid_indices)} valid sources...")
-    
-    rng = np.random.default_rng(args.seed)
-    u_array = rng.uniform(0, 1, size=len(valid_indices))
-    
-    for idx, i in enumerate(valid_indices):
-        quantiles = decode_quantiles(qcold[i].tobytes())
-                        
-        results = measure_from_quantiles(
-            quantiles,
-            quantities_to_measure=list(q_to_compute),
-            odds_window=args.odds_window,
-            u=float(u_array[idx])
-        )
-        for q_name, value in results.items():
-            d[q_name][i] = value
+        valid = np.any(qcold != 0, axis=1)
+        valid_indices = np.where(valid)[0]
+        print(f"Calculating point estimates for {len(valid_indices)} valid sources...")
+        
+        rng = np.random.default_rng(args.seed)
+        u_array = rng.uniform(0, 1, size=len(valid_indices))
+        
+        for idx, i in enumerate(valid_indices):
+            quantiles = decode_quantiles(qcold[i].tobytes())
+                            
+            results = measure_from_quantiles(
+                quantiles,
+                quantities_to_measure=list(q_to_compute),
+                odds_window=args.odds_window,
+                u=float(u_array[idx])
+            )
+            for q_name, value in results.items():
+                d[q_name][i] = value
 
-    final_cols = []
-    for col in orig_cols:
-        if col.name.upper() not in q_to_compute:
-            final_cols.append(col)
+        return {name: ('E' if array.dtype == np.float32 else 'I', array) for name, array in d.items()}
 
-    for name, array in d.items():
-        format_str = 'E' if array.dtype == np.float32 else 'I'
-        final_cols.append(fits.Column(name=name, format=format_str, array=array))
-
-    new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-    new_hdu.header['HISTORY'] = f'Computed point estimates from column: {actual_encoded_name}'
-    print(f"Writing point estimates to: {args.output}")
-    new_hdu.writeto(args.output, overwrite=True)
-    print('Done.')
+    history = f"Computed point estimates from column: {args.encoded}"
+    process_fits_table(args.input, args.output, [args.encoded], list(q_to_compute), history, measure_callback)
 
 
 # --- Logic for the 'plot' command ---
