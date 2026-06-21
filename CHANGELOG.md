@@ -14,6 +14,9 @@ PCHIP interpolation.
 
 - **New `combine` command.** Combines two encoded PDFs with different algorithms: average, correlation, or conflation.
 
+- **Multiple PDFs in same plot.** Now the `--encoded` keyword in the `plot` command accepts multiple column names to
+show together more than one PDFs.
+
 ## [1.1.2] - 2026-06-19
 
 ## Fixed
