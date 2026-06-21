@@ -17,6 +17,10 @@ PCHIP interpolation.
 - **Multiple PDFs in same plot.** Now the `--encoded` keyword in the `plot` command accepts multiple column names to
 show together more than one PDFs.
 
+## Changed
+
+- **Moved FITS processing to new i/o module** All FITS table read/write operations are now channelled via the new io module.
+
 ## [1.1.2] - 2026-06-19
 
 ## Fixed
