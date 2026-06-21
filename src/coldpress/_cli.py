@@ -19,10 +19,6 @@ from .constants import (
 )
 from .io import find_column_name, fix_encoded_column, process_fits_table, print_fits_info
 
-# Compatible trapz function
-trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
-
-
 # --- Logic for the 'info' command ---
 def info_logic(args):
     """Displays metadata about a FITS file.
