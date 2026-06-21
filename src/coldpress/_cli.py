@@ -6,7 +6,6 @@ import os
 import sys
 import time
 import numpy as np
-from astropy.io import fits
 
 from . import __version__
 from .encode import encode_from_binned, encode_from_density, encode_from_samples, density_to_quantiles, encode_quantiles
@@ -18,7 +17,7 @@ from .constants import (
     DEFAULT_ID_COL, DEFAULT_ENCODED_COL,
     DEFAULT_PACKET_LENGTH, DEFAULT_TOLERANCE, DEFAULT_ODDS_WINDOW
 )
-from .io import find_column_name, fix_encoded_column, process_fits_table
+from .io import find_column_name, fix_encoded_column, process_fits_table, print_fits_info
 
 # Compatible trapz function
 trapz = np.trapezoid if hasattr(np, "trapezoid") else np.trapz
@@ -39,39 +38,7 @@ def info_logic(args):
             - hdu (int): The HDU index to inspect.
             - header (bool): If True, print the full FITS header.
     """
-    try:
-        with fits.open(args.input) as h:
-            if args.hdu >= len(h):
-                print(f"Error: HDU {args.hdu} not found. File has {len(h)} HDUs (0 to {len(h)-1}).", file=sys.stderr)
-                sys.exit(1)
-                
-            hdu = h[args.hdu]
-            
-            print(f"Inspecting '{args.input}'...")
-            
-            if not hdu.is_image:
-                print(f"HDU {args.hdu} (Name: '{hdu.name}')")
-                print(f"  Rows: {hdu.header['NAXIS2']}")
-                print(f"  Columns: {len(hdu.columns)}")
-                print("  --- Column Details ---")
-                for col in hdu.columns:
-                    print(f"    - Name: {col.name:<20} Format: {col.format}")
-            else:
-                print(f"HDU {args.hdu} is an Image HDU (Name: '{hdu.name}')")
-                print(f"  Dimensions: {hdu.shape}")
-                print(f"  Data Type (BITPIX): {hdu.header['BITPIX']}")
-
-            if args.header:
-                print("\n--- FITS Header ---")
-                print(repr(hdu.header))
-
-    except FileNotFoundError:
-        print(f"Error: Input file not found at '{args.input}'", file=sys.stderr)
-        sys.exit(1)
-    except Exception as e:
-        print(f"An error occurred: {e}", file=sys.stderr)
-        sys.exit(1)
-
+    print_fits_info(args.input, hdu_index=args.hdu, print_header=args.header)
 
 # --- Logic for the 'encode' command ---
 def encode_logic(args):

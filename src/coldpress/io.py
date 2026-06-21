@@ -137,3 +137,42 @@ def process_fits_table(input_path, output_path, required_cols, drop_cols, histor
     print(f"Writing output to: {output_path}")
     new_hdu.writeto(output_path, overwrite=True)
     print('Done.')    
+    
+def print_fits_info(input_path, hdu_index=1, print_header=False):
+    """
+    Reads a FITS file and prints information about a specified HDU,
+    including its type (Image or Table), dimensions, and column details.
+    Optionally prints the full FITS header.
+    """
+    try:
+        with fits.open(input_path) as h:
+            if hdu_index >= len(h):
+                print(f"Error: HDU {hdu_index} not found. File has {len(h)} HDUs (0 to {len(h)-1}).", file=sys.stderr)
+                sys.exit(1)
+                
+            hdu = h[hdu_index]
+            
+            print(f"Inspecting '{input_path}'...")
+            
+            if not hdu.is_image:
+                print(f"HDU {hdu_index} (Name: '{hdu.name}')")
+                print(f"  Rows: {hdu.header['NAXIS2']}")
+                print(f"  Columns: {len(hdu.columns)}")
+                print("  --- Column Details ---")
+                for col in hdu.columns:
+                    print(f"    - Name: {col.name:<20} Format: {col.format}")
+            else:
+                print(f"HDU {hdu_index} is an Image HDU (Name: '{hdu.name}')")
+                print(f"  Dimensions: {hdu.shape}")
+                print(f"  Data Type (BITPIX): {hdu.header['BITPIX']}")
+
+            if print_header:
+                print("\n--- FITS Header ---")
+                print(repr(hdu.header))
+
+    except FileNotFoundError:
+        print(f"Error: Input file not found at '{input_path}'", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"An error occurred: {e}", file=sys.stderr)
+        sys.exit(1)    
