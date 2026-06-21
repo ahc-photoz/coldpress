@@ -83,15 +83,16 @@ def step_pdf_from_quantiles(quantiles):
     p_steps_extended = np.concatenate(([0],p_steps,[0]))
     return z_steps_extended, p_steps_extended
     
-def plot_from_quantiles(quantiles, output_filename=None, interactive=False, markers=None, source_id=None, method='all', units='redshift'):
-    """Generates and saves or displays a plot of a single PDF from its quantiles.
+def plot_from_quantiles(quantiles, output_filename=None, interactive=False, markers=None, source_id=None, method='all', units='redshift', labels=None):
+    """Generates and saves or displays a plot of one or more PDFs from their quantiles.
 
-    Reconstructs a PDF using one or more methods ('steps', 'spline') and
+    Reconstructs one or multiple PDFs using one or more methods ('steps', 'spline') and
     saves the resulting plot to a file. It can also overplot vertical lines
     to mark specific quantities of interest.
 
     Args:
-        quantiles (np.ndarray): The array of quantile values for one PDF.
+        quantiles (np.ndarray or list): The array of quantile values for one PDF,
+            or a list of arrays for multiple PDFs.
         output_filename (str, optional): The path to save the plot file. Required
             if `interactive` is False. Defaults to None.
         interactive (bool, optional): If True, display the plot in an interactive
@@ -102,6 +103,8 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
             plot title. Defaults to None.
         method (str, optional): The PDF reconstruction method to plot. Can be
             'steps', 'spline', or 'all'. Defaults to 'all'.
+        labels (str or list, optional): A label string for a single PDF or a list of
+            label strings for multiple PDFs to display in the legend.
             
     Raises:
         ImportError if matplotlib is not installed.
@@ -116,15 +119,34 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
         
     from .decode import quantiles_to_binned
     
+    # Ensure inputs are lists for iteration
+    if isinstance(quantiles, np.ndarray) and quantiles.ndim == 1:
+        quantiles_list = [quantiles]
+        labels_list = [labels] if isinstance(labels, str) else (labels or [None])
+    else:
+        quantiles_list = quantiles
+        labels_list = labels or [None] * len(quantiles_list)
+
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    if method == 'steps' or method == 'all':
-        z_steps, p_steps = step_pdf_from_quantiles(quantiles)
-        ax.step(z_steps[:-1], p_steps, where='post', label='PDF (steps)')
+    spline_lines = []
 
-    if method == 'spline' or method == 'all':
-        zvector, pdf = quantiles_to_binned(quantiles, Nbins=500, method='spline', renormalize=False)
-        spline_line, = ax.plot(zvector, pdf, label='PDF (spline)')
+    for q, label in zip(quantiles_list, labels_list):
+        if method == 'all':
+            steps_label = 'PDF (steps)' if label is None else f'{label} (steps)'
+            spline_label = 'PDF (spline)' if label is None else f'{label} (spline)'
+        else:
+            steps_label = 'PDF' if label is None else label
+            spline_label = 'PDF' if label is None else label
+
+        if method == 'steps' or method == 'all':
+            z_steps, p_steps = step_pdf_from_quantiles(q)
+            ax.step(z_steps[:-1], p_steps, where='post', label=steps_label)
+
+        if method == 'spline' or method == 'all':
+            zvector, pdf = quantiles_to_binned(q, Nbins=500, method='spline', renormalize=False)
+            line, = ax.plot(zvector, pdf, label=spline_label)
+            spline_lines.append((q, line))
 
     if markers:
         linestyles = [':', '--', '-.']
@@ -161,11 +183,15 @@ def plot_from_quantiles(quantiles, output_filename=None, interactive=False, mark
             # Get the new visible redshift range
             zmin, zmax = axes.get_xlim()
             
-            # Re-calculate the spline PDF on a new high-res grid for the visible range
-            new_zvector, new_pdf = quantiles_to_binned(quantiles, Nbins=500, z_min=zmin, z_max=zmax, method='spline', force_range=True, renormalize=False)
+            # Re-calculate splines for all plotted PDFs on the new high-res grid
+            for q, line in spline_lines:
+                new_zvector, new_pdf = quantiles_to_binned(q, Nbins=500, z_min=zmin, z_max=zmax, method='spline', force_range=True, renormalize=False)
+                line.set_data(new_zvector, new_pdf)
             
-            # Efficiently update the line data instead of replotting
-            spline_line.set_data(new_zvector, new_pdf)
+            # Rescale axis dynamically to updated spline objects
+            if spline_lines:
+                axes.relim()
+                axes.autoscale_view(scalex=False, scaley=True)
             
             # Redraw the canvas
             axes.figure.canvas.draw_idle()

@@ -508,7 +508,7 @@ def plot_logic(args):
             - plot_all (bool): Flag to plot all sources.
             - interactive (bool): Flag to show plots interactively.
             - idcol (str, optional): Column name containing source IDs.
-            - encoded (str): Name of the column with encoded PDFs.
+            - encoded (list): List of column names with encoded PDFs.
             - outdir (str): Directory to save plot files.
             - format (str): Output image format (e.g., 'png', 'pdf').
             - method (str): PDF reconstruction method for plotting 
@@ -527,10 +527,19 @@ def plot_logic(args):
 
     print(f"Opening input file: {args.input}")         
     with fits.open(args.input) as h:
-        # Fix the HDU in memory if necessary
-        hdu = fix_encoded_column(h[1], args.encoded)
-        actual_encoded_name = find_column_name(hdu.columns, args.encoded)
-        qcold = hdu.data[actual_encoded_name].astype('>i4') #ensure array is big-endian
+        hdu = h[1]
+        actual_encoded_names = []
+        
+        # Sequentially fix columns handling variable length, if needed
+        for enc_col in args.encoded:
+            hdu = fix_encoded_column(hdu, enc_col)
+            actual_name = find_column_name(hdu.columns, enc_col)
+            if actual_name is None:
+                print(f"Error: Encoded column '{enc_col}' not found in FITS table.", file=sys.stderr)
+                sys.exit(1)
+            actual_encoded_names.append(actual_name)
+        
+        qcold_list = [hdu.data[name].astype('>i4') for name in actual_encoded_names]
 
         data = hdu.data
         header = hdu.header
@@ -572,15 +581,21 @@ def plot_logic(args):
         os.makedirs(args.outdir, exist_ok=True)
 
     for i in indices_to_plot:
-        # Corrected logic for determining the source ID string
         source_id_val = data[actual_idcol][i] if actual_idcol is not None else f"row_{i}"
         
-        if not np.any(qcold[i] != 0):
+        quantiles_list = []
+        labels_list = []
+        
+        for j, qcold in enumerate(qcold_list):
+            if np.any(qcold[i] != 0):
+                quantiles = decode_quantiles(qcold[i].tobytes(), units=args.units)
+                quantiles_list.append(quantiles)
+                labels_list.append(actual_encoded_names[j])
+                
+        if not quantiles_list:
             print(f"Skipping source {source_id_val}: No valid PDF data.")
             continue
 
-        quantiles = decode_quantiles(qcold[i].tobytes(),units=args.units)
-        
         markers_to_plot = {}
         if args.quantities:
             for q_col in args.quantities:
@@ -592,15 +607,21 @@ def plot_logic(args):
         if not args.interactive:
             output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
         
+        # Enforce single interpolation method if multiple PDFs are plotted
+        plot_method = args.method
+        if len(quantiles_list) > 1 and args.method == 'all':
+            plot_method = 'spline'
+            
         try:
             plot_from_quantiles(
-                quantiles,
+                quantiles_list,
                 output_filename=output_filename,
                 interactive=args.interactive,
                 source_id=str(source_id_val),
-                method=args.method,
+                method=plot_method,
                 markers=markers_to_plot,
-                units=args.units
+                units=args.units,
+                labels=labels_list
             )
             if not args.interactive:
                 print(f"Saved plot to {output_filename}")
@@ -809,7 +830,7 @@ def main():
     plot_group.add_argument('--plot-all', action='store_true', dest='plot_all', help='Plot PDFs for all the sources in the file.')
     parser_plot.add_argument('--interactive', action='store_true', help='Display plots in an interactive window instead of saving to file.')
     parser_plot.add_argument('--idcol', type=str, nargs='?', default=DEFAULT_ID_COL, help='Name of input column containing source IDs.')
-    parser_plot.add_argument('--encoded', type=str, nargs='?', default=DEFAULT_ENCODED_COL, help='Name of input column containing cold-pressed PDFs.')
+    parser_plot.add_argument('--encoded', type=str, nargs='+', default=[DEFAULT_ENCODED_COL], help='Name(s) of input column(s) containing cold-pressed PDFs.')
     parser_plot.add_argument('--outdir', type=str, default='.', help='Output directory for plot files.')
     parser_plot.add_argument('--format', type=str, default='png', help='Output format for plots.')
     parser_plot.add_argument('--method', type=str, default='all', choices=['steps', 'spline', 'all'], help='PDF reconstruction method for plots.')
