@@ -345,7 +345,6 @@ def measure_logic(args):
     history = f"Computed point estimates from column: {args.encoded}"
     process_fits_table(args.input, args.output, [args.encoded], list(q_to_compute), history, measure_callback)
 
-
 # --- Logic for the 'plot' command ---
 def plot_logic(args):
     """Generates plots of PDFs from compressed data.
@@ -380,110 +379,103 @@ def plot_logic(args):
         print("Error: matplotlib is required for the plot command.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Opening input file: {args.input}")         
-    with fits.open(args.input) as h:
-        hdu = h[1]
-        actual_encoded_names = []
-        
-        # Sequentially fix columns handling variable length, if needed
-        for enc_col in args.encoded:
-            hdu = fix_encoded_column(hdu, enc_col)
-            actual_name = find_column_name(hdu.columns, enc_col)
-            if actual_name is None:
-                print(f"Error: Encoded column '{enc_col}' not found in FITS table.", file=sys.stderr)
-                sys.exit(1)
-            actual_encoded_names.append(actual_name)
-        
-        qcold_list = [hdu.data[name].astype('>i4') for name in actual_encoded_names]
-
-        data = hdu.data
-        header = hdu.header
-        orig_cols = list(hdu.columns)
-    
+    # Consolidate all columns required for the read operation
+    required_cols = list(args.encoded)
+    if args.idcol:
+        required_cols.append(args.idcol)
     if args.quantities:
-        all_cols_upper = {c.upper() for c in data.columns.names}
-        for q_col in args.quantities:
-            if q_col.upper() not in all_cols_upper:
-                print(f"Error: Quantity column '{q_col}' not found in FITS table.", file=sys.stderr)
+        required_cols.extend(args.quantities)
+        
+    # Remove duplicates while preserving order
+    required_cols = list(dict.fromkeys(required_cols))
+
+    def plot_callback(data_arrays, actual_names, **kwargs):
+        actual_encoded_names = [actual_names[col] for col in args.encoded]
+        qcold_list = [data_arrays[col].astype('>i4') for col in args.encoded]
+        
+        actual_idcol = actual_names.get(args.idcol)
+        Nrows = qcold_list[0].shape[0]
+
+        # Determine which rows to plot based on the mutually exclusive arguments
+        if args.plot_all:
+            indices_to_plot = range(Nrows)
+        elif args.first is not None:
+            num_to_plot = min(args.first, Nrows)
+            if args.first > Nrows:
+                print(f"Warning: Requested first {args.first} PDFs, but file only contains {Nrows}. Plotting all sources.")
+            indices_to_plot = range(num_to_plot)
+        else:  # This handles the 'id' case, which is the default if not the others
+            if actual_idcol is None:
+                print(f"Error: --id specified, but no '{args.idcol}' column found in {args.input}", file=sys.stderr)
                 sys.exit(1)
-    
-    actual_idcol = find_column_name(data.columns, args.idcol)
-
-    # Determine which rows to plot based on the mutually exclusive arguments
-    if args.plot_all:
-        indices_to_plot = range(len(data))
-    elif args.first is not None:
-        num_to_plot = min(args.first, len(data))
-        if args.first > len(data):
-            print(f"Warning: Requested first {args.first} PDFs, but file only contains {len(data)}. Plotting all sources.")
-        indices_to_plot = range(num_to_plot)
-    else:  # This handles the 'id' case, which is the default if not the others
-        if actual_idcol is None:
-            print(f"Error: --id specified, but no '{args.idcol}' column found in {args.input}", file=sys.stderr)
-            sys.exit(1)
-        
-        source_ids = list(args.id)
-        id_column_as_str = data[actual_idcol].astype(str)
-        source_ids_as_str = np.asarray(source_ids, dtype=str)
-        indices_to_plot = np.where(np.isin(id_column_as_str, source_ids_as_str))[0]
-
-        if len(indices_to_plot) != len(source_ids):
-            print("Warning: Some specified IDs were not found in the file.", file=sys.stderr)
-        
-    print(f"Plotting {len(indices_to_plot)} source(s)...")
-
-    if not args.interactive:
-        os.makedirs(args.outdir, exist_ok=True)
-
-    for i in indices_to_plot:
-        source_id_val = data[actual_idcol][i] if actual_idcol is not None else f"row_{i}"
-        
-        quantiles_list = []
-        labels_list = []
-        
-        for j, qcold in enumerate(qcold_list):
-            if np.any(qcold[i] != 0):
-                quantiles = decode_quantiles(qcold[i].tobytes(), units=args.units)
-                quantiles_list.append(quantiles)
-                labels_list.append(actual_encoded_names[j])
-                
-        if not quantiles_list:
-            print(f"Skipping source {source_id_val}: No valid PDF data.")
-            continue
-
-        markers_to_plot = {}
-        if args.quantities:
-            for q_col in args.quantities:
-                actual_col_name = next((c.name for c in data.columns if c.name.upper() == q_col.upper()), None)
-                if actual_col_name:
-                    markers_to_plot[q_col] = data[actual_col_name][i]
-                        
-        output_filename = None
-        if not args.interactive:
-            output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
-        
-        # Enforce single interpolation method if multiple PDFs are plotted
-        plot_method = args.method
-        if len(quantiles_list) > 1 and args.method == 'all':
-            plot_method = 'spline'
             
-        try:
-            plot_from_quantiles(
-                quantiles_list,
-                output_filename=output_filename,
-                interactive=args.interactive,
-                source_id=str(source_id_val),
-                method=plot_method,
-                markers=markers_to_plot,
-                units=args.units,
-                labels=labels_list
-            )
-            if not args.interactive:
-                print(f"Saved plot to {output_filename}")
-        except ImportError as e:
-            print(e, file=sys.stderr)
-            sys.exit(1)
+            source_ids = list(args.id)
+            id_column_as_str = data_arrays[args.idcol].astype(str)
+            source_ids_as_str = np.asarray(source_ids, dtype=str)
+            indices_to_plot = np.where(np.isin(id_column_as_str, source_ids_as_str))[0]
 
+            if len(indices_to_plot) != len(source_ids):
+                print("Warning: Some specified IDs were not found in the file.", file=sys.stderr)
+            
+        print(f"Plotting {len(indices_to_plot)} source(s)...")
+
+        if not args.interactive:
+            os.makedirs(args.outdir, exist_ok=True)
+
+        for i in indices_to_plot:
+            source_id_val = data_arrays[args.idcol][i] if actual_idcol is not None else f"row_{i}"
+            
+            quantiles_list = []
+            labels_list = []
+            
+            for j, qcold in enumerate(qcold_list):
+                if np.any(qcold[i] != 0):
+                    quantiles = decode_quantiles(qcold[i].tobytes(), units=args.units)
+                    quantiles_list.append(quantiles)
+                    labels_list.append(actual_encoded_names[j])
+                    
+            if not quantiles_list:
+                print(f"Skipping source {source_id_val}: No valid PDF data.")
+                continue
+
+            markers_to_plot = {}
+            if args.quantities:
+                for q_col in args.quantities:
+                    if q_col in data_arrays:
+                        markers_to_plot[q_col] = data_arrays[q_col][i]
+                            
+            output_filename = None
+            if not args.interactive:
+                output_filename = os.path.join(args.outdir, f"pdf_{source_id_val}.{args.format.lower()}")
+            
+            # Enforce single interpolation method if multiple PDFs are plotted
+            plot_method = args.method
+            if len(quantiles_list) > 1 and args.method == 'all':
+                plot_method = 'spline'
+                
+            try:
+                plot_from_quantiles(
+                    quantiles_list,
+                    output_filename=output_filename,
+                    interactive=args.interactive,
+                    source_id=str(source_id_val),
+                    method=plot_method,
+                    markers=markers_to_plot,
+                    units=args.units,
+                    labels=labels_list
+                )
+                if not args.interactive:
+                    print(f"Saved plot to {output_filename}")
+            except ImportError as e:
+                print(e, file=sys.stderr)
+                sys.exit(1)
+
+        # Returning None instructs process_fits_table to skip the FITS writing step
+        return None
+
+    # Pass output_path=None and history_msg=None for a read-only operation
+    process_fits_table(args.input, None, required_cols, [], None, plot_callback)
+    
 # --- Logic for the 'check' command ---
 def check_logic(args):
     """Checks PDFs for potential issues and creates flags.
@@ -504,92 +496,73 @@ def check_logic(args):
             - list (bool): If True, list flagged source IDs to stdout.
             - idcol (str, optional): Column name of source IDs, required for --list.
     """
-    print(f"Opening input file: {args.input}")
-    with fits.open(args.input) as h:
-        data = h[1].data
-        header = h[1].header
-        original_columns = data.columns
-        
-        actual_idcol = None
-        if args.list:
-            actual_idcol = find_column_name(data.columns, args.idcol)
-            if actual_idcol is None:
-                print(f"Error: ID column '{args.idcol}' not found.", file=sys.stderr)
-                sys.exit(1)
-            ID = data[actual_idcol]
-        
-        if args.binned is None:
-            actual_samples_col = find_column_name(data.columns, args.samples)
-            if actual_samples_col is None:
-                print(f"Error: Samples column '{args.samples}' not found.", file=sys.stderr)
-                sys.exit(1)
-            samples = data[actual_samples_col]
-            invalid = (np.sum(~np.isfinite(samples),axis=1) > 0)
-            v = ~invalid
-            unresolved = (np.max(samples[v],axis=1)-np.min(samples[v],axis=1) == 0)
-            print(f'Column {actual_samples_col} contains {samples.shape[0]} sampled PDFs, each containing {samples.shape[1]} random redshift samples.')
-        else:
-            actual_binned_col = find_column_name(data.columns, args.binned)
-            if actual_binned_col is None:
-                print(f"Error: Binned PDF column '{args.binned}' not found.", file=sys.stderr)
-                sys.exit(1)
-            PDF = data[actual_binned_col]
-            invalid = (np.sum(~np.isfinite(PDF),axis=1) > 0) | (np.nanmin(PDF,axis=1) < 0) | (np.nanmax(PDF,axis=1) == 0.)
-            v = ~invalid
-            unresolved = (np.sum(PDF[v],axis=1)-np.max(PDF[v],axis=1) == 0)
-            threshold = args.truncation_threshold * np.max(PDF[v],axis=1)
-            truncated = ((PDF[v,0] > threshold) | (PDF[v,-1] > threshold))
-            print(f'Column {actual_binned_col} contains {PDF.shape[0]} binned PDFs, each containing {PDF.shape[1]} redshift bins.')
-    
-    print(f"{np.sum(invalid)} PDFs have been flagged as 'invalid'")
-    print(f"{np.sum(unresolved)} PDFs have been flagged as 'unresolved'")
-    if args.binned is not None:
-        print(f"{np.sum(truncated)} PDFs have been flagged as 'truncated'")
-        
+    orig_column = args.binned or args.samples
+    required_cols = [orig_column]
     if args.list:
-        print('List of source IDs with flagged issues in their PDFs:')
-        for source in ID[invalid]:
-            print(f"{source}  invalid")
-        for i, source in enumerate(ID[v]):
-            tag = ""
-            if unresolved[i]:
-                tag += " unresolved"
-            if args.binned is not None and truncated[i]:
-                tag += " truncated"
-            if tag != "":
-                print(f"ID = {source}:{tag}")
-    
-    if args.output:                                
-        d = {}
-        d['Z_FLAGS'] = np.zeros(len(invalid), dtype=np.int16)
-        d['PDF_invalid'] = invalid
-        d['PDF_unresolved'] = np.zeros(len(invalid),dtype=bool)
-        d['PDF_unresolved'][v] = unresolved
-        d['Z_FLAGS'][d['PDF_invalid']] = 1
-        d['Z_FLAGS'][d['PDF_unresolved']] += 2
+        required_cols.append(args.idcol)
+
+    def check_callback(data_arrays, actual_names, **kwargs):
+        data = data_arrays[orig_column]
+        if args.list:
+            ID = data_arrays[args.idcol]
+            
+        if args.binned is None:
+            invalid = (np.sum(~np.isfinite(data), axis=1) > 0)
+            v = ~invalid
+            unresolved = (np.max(data[v], axis=1) - np.min(data[v], axis=1) == 0)
+            print(f"Column {actual_names[orig_column]} contains {data.shape[0]} sampled PDFs, each containing {data.shape[1]} random redshift samples.")
+        else:
+            invalid = (np.sum(~np.isfinite(data), axis=1) > 0) | (np.nanmin(data, axis=1) < 0) | (np.nanmax(data, axis=1) == 0.)
+            v = ~invalid
+            unresolved = (np.sum(data[v], axis=1) - np.max(data[v], axis=1) == 0)
+            threshold = args.truncation_threshold * np.max(data[v], axis=1)
+            truncated = ((data[v, 0] > threshold) | (data[v, -1] > threshold))
+            print(f"Column {actual_names[orig_column]} contains {data.shape[0]} binned PDFs, each containing {data.shape[1]} redshift bins.")
+            
+        print(f"{np.sum(invalid)} PDFs have been flagged as 'invalid'")
+        print(f"{np.sum(unresolved)} PDFs have been flagged as 'unresolved'")
         if args.binned is not None:
-            d['PDF_truncated'] = np.zeros(len(invalid),dtype=bool)
-            d['PDF_truncated'][v] = truncated
-            d['Z_FLAGS'][d['PDF_truncated']] += 4
+            print(f"{np.sum(truncated)} PDFs have been flagged as 'truncated'")
+            
+        if args.list:
+            print("List of source IDs with flagged issues in their PDFs:")
+            for source in ID[invalid]:
+                print(f"{source}  invalid")
+            for i, source in enumerate(ID[v]):
+                tag = ""
+                if unresolved[i]: tag += " unresolved"
+                if args.binned is not None and truncated[i]: tag += " truncated"
+                if tag != "": print(f"ID = {source}:{tag}")
 
-        final_cols = []
-        new_col_names = {name.upper() for name in d.keys()}
-        for col in original_columns:
-            if col.name.upper() not in new_col_names:
-                final_cols.append(col)
+        if args.output:                                
+            d = {}
+            d['Z_FLAGS'] = np.zeros(len(invalid), dtype=np.int16)
+            d['PDF_invalid'] = invalid
+            d['PDF_unresolved'] = np.zeros(len(invalid), dtype=bool)
+            d['PDF_unresolved'][v] = unresolved
+            d['Z_FLAGS'][d['PDF_invalid']] = 1
+            d['Z_FLAGS'][d['PDF_unresolved']] += 2
+            if args.binned is not None:
+                d['PDF_truncated'] = np.zeros(len(invalid), dtype=bool)
+                d['PDF_truncated'][v] = truncated
+                d['Z_FLAGS'][d['PDF_truncated']] += 4
 
-        for name, array in d.items():
-            if array.dtype == np.float32: format_str = 'E'
-            elif array.dtype == np.int16: format_str = 'I'
-            elif array.dtype == bool: format_str = 'L'    
-            final_cols.append(fits.Column(name=name, format=format_str, array=array))
+            result = {}
+            for name, array in d.items():
+                if array.dtype == np.float32: format_str = 'E'
+                elif array.dtype == np.int16: format_str = 'I'
+                elif array.dtype == bool: format_str = 'L'    
+                result[name] = (format_str, array)
+            return result
+        
+        return None
 
-        new_hdu = fits.BinTableHDU.from_columns(final_cols, header=header)
-        new_hdu.header['HISTORY'] = f'Added flags columns indicating issues in the PDFs: {list(d.keys())}'
-        print(f"Writing point estimates to: {args.output}")
-        new_hdu.writeto(args.output, overwrite=True)
-        print('Done.')
+    drop_cols = ['Z_FLAGS', 'PDF_invalid', 'PDF_unresolved', 'PDF_truncated'] if args.output else []
+    hist_cols = ['Z_FLAGS', 'PDF_invalid', 'PDF_unresolved'] + (['PDF_truncated'] if args.binned else [])
+    history = f"Added flags columns indicating issues in the PDFs: {hist_cols}" if args.output else None
 
+    process_fits_table(args.input, args.output, required_cols, drop_cols, history, check_callback)
+    
 # --- Main Entry Point and Parser Configuration ---
 def main():
     """Main entry point for the coldpress command-line interface.
