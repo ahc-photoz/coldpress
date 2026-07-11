@@ -2,7 +2,9 @@
 
 The `coldpress` command-line interface provides tools for the compression, analysis, and visualization of redshift probability density functions (PDFs).
 
-[[NOTE: the CLI is intended to work with FITS tables. If the user has PDFs in a different file format, it should be converted to FITS table first.]] 
+## Data Requirements
+* **File Format:** The CLI strictly operates on FITS tables. PDFs in other formats must be converted to FITS tables prior to execution.
+* **HDU Targeting:** In a standard FITS file, Header Data Unit 0 (HDU 0) contains the primary header and optional image arrays, while the binary table is typically stored in HDU 1. Currently, all commands except `info` strictly assume the target table is in HDU 1 and will fail otherwise. Global `--hdu` argument support is planned for future releases.
 
 ## Global Usage
 `coldpress [-h] [-v] {info,encode,decode,combine,measure,plot,check} ...`
@@ -10,25 +12,33 @@ The `coldpress` command-line interface provides tools for the compression, analy
 ---
 
 ## `info`
-Displays metadata about a FITS file HDU, including dimensions, types, and column details.
-
-[[NOTE: indicate what HDU stands for. Explain that in FITS files, tables are usually in HDU 1, while HDU 0 contains... what?. Indicate that all commands other than info assume that the table to read is on HDU 1 and they will fail if it is in a different one (in the near future we will implement an optional --hdu keyword for all coldpress commands.]]
+Displays metadata about a specific FITS file HDU, including dimensions, types, and column details.
 
 ### Usage
 `coldpress info [-h] [--hdu HDU] [--header] input.fits`
 
 ### Arguments
 * `input.fits`: Name of the input FITS file.
-* `--hdu HDU`: HDU to inspect (default: 1).
-* `--header`: Print the full FITS header.
-[[NOTE: is it the header of the HDU, a general header of the file, or both?]]
+* `--hdu HDU`: Index of the HDU to inspect (default: 1).
+* `--header`: Print the full FITS header of the specified HDU.
 
 ---
 
 ## `encode`
 Compresses redshift PDFs into the fixed-size ColdPress format. Accepts input as probability densities, binned probabilities, or random samples.
 
-[[NOTE: ColdPress expects the input column containing the uncompressed PDFs to be an array column of floats (or however this is called in FITS jargon). The redshift grid must be uniform in units of redshift (z) or ζ=ln(1+z). Input PDFs samples in an arbitrary grid are not supported yet.]]
+**Input Data Types:**
+The CLI handles three mutually exclusive representations of PDFs. It is critical to select the correct one, as the code cannot automatically distinguish between densities and binned probabilities.
+
+* **Probability Densities (`--density`):** The continuous PDF *P(z)* evaluated at discrete points on a uniform grid. All PDFs must have the same number of elements. NaNs are not allowed; PDFs that do not cover the entire grid range must be padded with zeros.
+* **Binned Probabilities (`--binned`):** The integrated probability within specific redshift bins. All PDFs must have the same number of elements. NaNs are not allowed; pad missing data with zeros.
+* **Random Samples (`--samples`):** Discrete random draws from the underlying distribution. Variable-length arrays are not natively supported; missing samples in fixed-length arrays must be represented with `NaN` (do not pad with zeros).
+
+**General Constraints:**
+
+* The input column containing the uncompressed PDFs must be a floating-point array column.
+* The grid must be uniform in units of either redshift *z* or ζ = ln(1+*z*). Arbitrary or non-uniform grids are unsupported.
+* The units for the input PDFs are assumed to be redshift *z* unless the `--units zeta` flag is explicitly specified.
 
 > **Important:** The input format arguments (`--density`, `--binned`, and `--samples`) are mutually exclusive. You must provide exactly one.
 
@@ -46,14 +56,14 @@ Compresses redshift PDFs into the fixed-size ColdPress format. Accepts input as 
 
 ### Optional Arguments
 * `-o`, `--out-encoded COL`: Name of the output column for cold-pressed PDFs (default: `COLDPRESS_PDF`).
-* `--zmin ZMIN` / `--zmax ZMAX`: Limits for the grid/bins (required if `--units redshift`).
-* `--zetamin ZETAMIN` / `--zetamax ZETAMAX`: Limits for the grid/bins (required if `--units zeta`).
+* `--zmin ZMIN` / `--zmax ZMAX`: Limits for the grid/bins (required if `--units redshift`). For binned PDFs, these values represent the centers of the first and last bins.
+* `--zetamin ZETAMIN` / `--zetamax ZETAMAX`: Limits for the grid/bins (required if `--units zeta`). For binned PDFs, these values represent the centers of the first and last bins.
 * `--length LENGTH`: Length of compressed PDFs in bytes. Must be a multiple of 4 (default: 80).
 * `--validate`: Verify accuracy of recovered quantiles.
-* `--tolerance TOLERANCE`: Maximum shift tolerated for the redshift of the quantiles (default: 0.001).
+* `--tolerance TOLERANCE`: Maximum shift tolerated for the recovered redshift in ζ space. There is a trade-off between the encoding length (number of quantiles) and precision. A value of 0.001 is reasonable for broad-band photo-*z*. Verify the results with the `plot` command; if the main peak exhibits a see-saw artifact, lower this tolerance (default: 0.001).
 * `--keep-orig`: Retain the original input column in the output file.
-* `--clip-fraction FRAC`: Fraction of extreme redshift samples to clip (only valid with `--samples`) (default: 0).
-* `--units [{redshift,zeta}]`: Independent axis representation: `redshift` ($z$) or `zeta` ($\ln(1+z)$) (default: `redshift`).
+* `--clip-fraction FRAC`: Fraction of extreme redshift samples to clip (only valid with `--samples`). Use this strictly to filter suspected artifacts; otherwise, it will artificially distort the PDF (default: 0).
+* `--units [{redshift,zeta}]`: Independent axis representation: `redshift` (*z*) or `zeta` (ζ = ln(1+*z*)) (default: `redshift`).
 
 ---
 
@@ -78,8 +88,8 @@ Extracts PDFs previously encoded with ColdPress back into binned distributions, 
 
 ### Optional Arguments
 * `--encoded COL`: Column containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
-* `--zmin ZMIN` / `--zmax ZMAX`: Output grid limits (required if `--units redshift` and not outputting samples).
-* `--zetamin ZETAMIN` / `--zetamax ZETAMAX`: Output grid limits (required if `--units zeta` and not outputting samples).
+* `--zmin ZMIN` / `--zmax ZMAX`: Output grid limits. For binned PDFs, these values represent the centers of the first and last bins (required if `--units redshift` and not outputting samples).
+* `--zetamin ZETAMIN` / `--zetamax ZETAMAX`: Output grid limits. For binned PDFs, these values represent the centers of the first and last bins (required if `--units zeta` and not outputting samples).
 * `--force-range`: Force the specified range even if PDFs are truncated.
 * `--method [{linear,spline}]`: Interpolation method (default: `linear`).
 * `--units [{redshift,zeta}]`: Independent axis representation (default: `redshift`).
@@ -122,56 +132,4 @@ Computes point-estimate statistics (e.g., mean, mode, credible intervals) direct
 
 ### Optional Arguments
 * `--encoded COL`: Column containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
-* `--quantities QUANTITY ...`: List of specific quantities to measure (default: `ALL`).
-* `--odds-window ODDS_WINDOW`: Half-width of the integration window for odds calculation (default: 0.03).
-* `--seed SEED`: Random seed for deterministic `Z_RANDOM` extraction.
-* `--list-quantities`: Display all available quantities and descriptions, then exit.
-
----
-
-## `plot`
-Reconstructs and plots PDFs encoded with ColdPress. Supports batch saving or interactive viewing.
-
-### Usage
-`coldpress plot [-h] (--id ID [ID ...] | --first N | --plot-all) [--interactive] [--idcol [IDCOL]] [--encoded ENCODED [ENCODED ...]] [--outdir OUTDIR] [--format FORMAT] [--method {steps,spline,all}] [--quantities QUANTITIES [QUANTITIES ...]] [--units [{redshift,zeta}]] input`
-
-### Positional Arguments
-* `input`: Input FITS table.
-
-### Required Named Arguments (Mutually Exclusive)
-* `--id ID ...`: Specific source ID(s) to plot.
-* `--first N`: Plot the first N sources.
-* `--plot-all`: Plot all sources in the file.
-
-### Optional Arguments
-* `--interactive`: Display plots interactively instead of saving to disk.
-* `--idcol IDCOL`: Column containing source IDs (default: `ID`).
-* `--encoded ENCODED ...`: Column(s) containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
-* `--outdir OUTDIR`: Directory for saved plots (default: `.`).
-* `--format FORMAT`: Output image format (default: `png`).
-* `--method {steps,spline,all}`: PDF reconstruction method for visualization (default: `all`).
-* `--quantities QUANTITIES ...`: FITS columns to overplot as vertical markers.
-* `--units [{redshift,zeta}]`: Axis representation (default: `redshift`).
-
----
-
-## `check`
-Analyzes input PDFs (binned or sampled) for non-finite values, delta-function-like properties, or truncation, and flags them.
-
-> **Important:** If you use the `--list` argument to print flagged issues to standard output, you must also provide the `--idcol` argument.
-
-### Usage
-`coldpress check [-h] (--binned COL | --samples COL) [--truncation-threshold THRESHOLD] [--list] [--idcol IDCOL] input [output]`
-
-### Positional Arguments
-* `input`: Input FITS catalog.
-* `output`: (Optional) Output FITS catalog with appended flag columns.
-
-### Required Named Arguments (Mutually Exclusive)
-* `--binned COL`: Evaluate binned PDFs.
-* `--samples COL`: Evaluate sampled PDFs.
-
-### Optional Arguments
-* `--truncation-threshold THRESHOLD`: Probability density threshold at grid edges to trigger truncation flag (default: 0.05).
-* `--list`: Print flagged source IDs to standard output.
-* `--idcol IDCOL`: Column containing source IDs.
+* `--quantities QUANTITY ...`: List of specific quantities
