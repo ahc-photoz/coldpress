@@ -157,6 +157,57 @@ Computes point-estimate statistics (e.g., mean, mode, credible intervals) direct
 * `output`: Output FITS table.
 
 ### Optional Arguments
-
 * `--encoded COL`: Column containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
-* `--quantities QUANTITY ...`: List of specific quantities.
+* `--quantities QUANTITY ...`: List of specific quantities to measure (default: `ALL`).
+* `--odds-window ODDS_WINDOW`: Half-width of the integration window for odds calculation (default: 0.03).
+* `--seed SEED`: Random seed for deterministic `Z_RANDOM` extraction.
+* `--list-quantities`: Display all available quantities and descriptions, then exit.
+
+---
+
+## `plot`
+Reconstructs and plots PDFs encoded with ColdPress. Supports batch saving or interactive viewing.
+
+### Usage
+`coldpress plot [-h] (--id ID [ID ...] | --first N | --plot-all) [--interactive] [--idcol [IDCOL]] [--encoded ENCODED [ENCODED ...]] [--outdir OUTDIR] [--format FORMAT] [--method {steps,spline,all}] [--quantities QUANTITIES [QUANTITIES ...]] [--units [{redshift,zeta}]] input`
+
+### Positional Arguments
+* `input`: Input FITS table.
+
+### Required Named Arguments (Mutually Exclusive)
+* `--id ID ...`: Specific source ID(s) to plot.
+* `--first N`: Plot the first N sources.
+* `--plot-all`: Plot all sources in the file.
+
+### Optional Arguments
+* `--interactive`: Display plots interactively instead of saving to disk.
+* `--idcol IDCOL`: Column containing source IDs (default: `ID`).
+* `--encoded ENCODED ...`: Column(s) containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
+* `--outdir OUTDIR`: Directory for saved plots (default: `.`).
+* `--format FORMAT`: Output image format (default: `png`).
+* `--method {steps,spline,all}`: PDF reconstruction method for visualization (default: `all`).
+* `--quantities QUANTITIES ...`: FITS columns to overplot as vertical markers.
+* `--units [{redshift,zeta}]`: Axis representation (default: `redshift`).
+
+---
+
+## `check`
+Analyzes input PDFs (binned or sampled) for non-finite values, delta-function-like properties, or truncation, and flags them.
+
+> **Important:** If you use the `--list` argument to print flagged issues to standard output, you must also provide the `--idcol` argument.
+
+### Usage
+`coldpress check [-h] (--binned COL | --samples COL) [--truncation-threshold THRESHOLD] [--list] [--idcol IDCOL] input [output]`
+
+### Positional Arguments
+* `input`: Input FITS catalog.
+* `output`: (Optional) Output FITS catalog with appended flag columns.
+
+### Required Named Arguments (Mutually Exclusive)
+* `--binned COL`: Evaluate binned PDFs.
+* `--samples COL`: Evaluate sampled PDFs.
+
+### Optional Arguments
+* `--truncation-threshold THRESHOLD`: Probability density threshold at grid edges to trigger truncation flag (default: 0.05).
+* `--list`: Print flagged source IDs to standard output.
+* `--idcol IDCOL`: Column containing source IDs.
