@@ -70,6 +70,10 @@ The CLI handles three mutually exclusive representations of PDFs. It is critical
 ## `decode`
 Extracts PDFs previously encoded with ColdPress back into binned distributions, density grids, or random samples.
 
+[[NOTE: clarify that, for the binned and density modes, the user needs to specify the mininum and maximum redshifts of the grid as well as the number of points. The resulting grid will have uniform spacing in z or ζ units given by ∆ = (zmax - zmin)/(npoints -1) or ∆ = (zetamax - zetamin)/(npoints -1). The same grid will be used for all the PDFs. If the range of the compressed PDF is smaller than the span of the grid, it will be padded with zeros. If it is larger, decoding will fail unless the --force-range flago is used to allow truncation. In the --samples mode the output is npoints random samples taken from the PDFs and no redshift range needs to be specified.]]
+
+[[NOTE: some context about the interpolation method. PDFs compressed with ColdPress store a sequence of redshifts corresponding to specific quantiles of the cumulative distribution function (CDF). The information about the shape of the CDF between those anchor points is lost. The only physical constraint is that the CDF must increase monotonically. ColdPress provides two methods for reconstruction of the continuous CDF: linear interpolation and monotonic splines. Linear interpolation results in a CDF composed of straight-line segments. Therefore its derivative, P(z), is a step function. Spline interpolation results in a more natural looking (and often more realistic) shape. In the wings of the PDF spline interpolation is replaced with a powerlaw for a more natural cut off. The default interpolation method remains linear for backwards compatibility but we strongly recommend using spline.]]
+
 > **Note:** If the extracted PDF range exceeds your specified grid bounds, decoding will fail. Use the `--force-range` flag to allow truncation.
 
 ### Usage
@@ -98,6 +102,13 @@ Extracts PDFs previously encoded with ColdPress back into binned distributions, 
 
 ## `combine`
 Combines two coldpress-encoded PDFs into a single compressed PDF or calculates their correlation p-value.
+
+[[NOTE: some context: the combine command is new in version 1.2.0. ColdPress provides three distinct operations for PDFs: conflation is used to combine two statistically independent PDFs to obtain a narrower one. In the context of photometric redshifts, statistical independence means that they are obtained from independent sets of observations. Conflation is also the correct operation to combine a likelihood with a redshift prior. Note that the conflated PDF will be overconfident if the redshift priors applied to the individual PDFs combined are not independent (see Hernán-Caballero et al. (2024) url: https://ui.adsabs.harvard.edu/abs/2024A%26A...684A..61H/abstract) for details.)
+Average is the correct strategy to combine PDFs obtained from the same data but with different methods (e.g. two different photo-z codes). Gemini: do you agree? if not, clarify here.
+The correlation of two PDFs is given by: P(∆z) = Integral of P1(z)*P2(z - ∆z) dz. It is useful to test the hypothesis that two PDFs correspond to redshift distributions for the same object. For this we compute a p-value defined as the integral of P(∆z) in regions that verify P(∆z) < P(∆z = 0). (Gemini please check the math).
+If the p-value is low, it means that the PDFs correspond to different objects or one of them is unrealistic, and they should not be combined.]]
+
+[[NOTE: the --tolerance keyword indicates the maximum shift in the redshift of the quantiles that is allowed. Please clarify.]]
 
 ### Usage
 `coldpress combine [-h] (--conflate COL1 COL2 | --average COL1 COL2 | --correlate COL1 COL2) [-o OUT_COMBINED] [--length [LENGTH]] [--tolerance [TOLERANCE]] input.fits output.fits`
