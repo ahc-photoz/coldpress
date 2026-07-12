@@ -24,7 +24,7 @@ Citation:
 __author__ = "Antonio Hernán Caballero"
 __email__ = "antoniohernancaballero@gmail.com"
 __version__ = "1.2.1"
-__license__ = "GPLv3"
+__license__ = "LGPLv3"
 __copyright__ = "Copyright 2026, Antonio Hernán Caballero"
 
 from .encode import (
