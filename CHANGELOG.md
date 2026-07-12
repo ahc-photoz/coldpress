@@ -6,6 +6,9 @@
 
 ** CLI user manual.** Added command line interface user manual (docs/cli_manual.md) detailing command inputs, usage, and operational constraints.
 
+## Changed
+
+** Updated README.md** Now the quick start guide is up to date with recent changes in the CLI.
 
 ## [1.2.0] - 2026-07-11
 
