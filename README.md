@@ -27,12 +27,12 @@ You can install **coldpress** directly from GitHub with `pip`.
 To install the latest stable version, use:
 
 ```bash
-pip install [https://github.com/ahc-photoz/coldpress/releases/latest/download/coldpress-latest.tar.gz](https://github.com/ahc-photoz/coldpress/releases/latest/download/coldpress-latest.tar.gz)
+pip install https://github.com/ahc-photoz/coldpress/releases/latest/download/coldpress-latest.tar.gz
 ```
 To install the latest update from the development branch, use:
 
 ```bash
-pip install [https://github.com/ahc-photoz/coldpress.git@develop](https://github.com/ahc-photoz/coldpress.git@develop)
+pip install git+https://github.com/ahc-photoz/coldpress.git@develop
 ```
 
 ## Documentation & CLI Manual
@@ -115,7 +115,7 @@ Done.
 
 By default, the original `PDF` column is removed. To keep it, add the `--keep-orig` flag. The compressed data is saved in a new column named `COLDPRESS_PDF` by default.
 
-### 5. Measure Statistics with `coldpress measure`
+### 3. Measure Statistics with `coldpress measure`
 
 While a full PDF is comprehensive, point estimates like the mode or median are often more convenient. **coldpress** can measure many common statistics directly from the compressed data utilizing linear interpolation of the CDF.
 
@@ -133,7 +133,7 @@ coldpress measure hsc_sample_encoded.fits hsc_sample_measured.fits --quantities 
 > [!TIP]
 > Use `--quantities ALL` to compute all available statistics at once. If computing `Z_RANDOM`, use the `--seed` argument to ensure reproducibility.
 
-### 6. Visualizing the PDFs with `coldpress plot`
+### 4. Visualizing the PDFs with `coldpress plot`
 
 You can quickly visualize any PDF directly from its compressed representation using the `plot` command. 
 
@@ -181,7 +181,7 @@ coldpress plot hsc_sample_measured.fits --quantities Z_MODE Z_MEDIAN --idcol ID 
 > [!TIP] 
 > Use the pan and zoom buttons in the interactive window to explore your PDFs in full detail.
 
-### 7. Decompress PDFs with `coldpress decode`
+### 5. Decompress PDFs with `coldpress decode`
 
 For cases where you need the PDF in a standard format for other software, the `decode` command reconstructs the distribution.
 
