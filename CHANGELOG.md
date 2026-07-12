@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1] - 2026-07-12
+
+## Added
+
+** CLI user manual.** Added command line interface user manual (docs/cli_manual.md) detailing command inputs, usage, and operational constraints.
+
+
 ## [1.2.0] - 2026-07-11
 
 ## Fixed

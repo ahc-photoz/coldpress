@@ -4,9 +4,9 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "coldpress"
-version = "1.2.0"
+version = "1.2.1"
 authors = [
-  { name="Antonio Hernán Caballero", email="ahernan@cefca.es" },
+  { name="Antonio Hernán Caballero", email="antoniohernancaballero@gmail.com" },
 ]
 
 description = "Efficient compression for redshift probability distribution functions."
