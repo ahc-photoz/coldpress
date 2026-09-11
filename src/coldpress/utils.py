@@ -24,7 +24,7 @@ def _monotone_natural_spline(Xout, X, Y):
     try:
         from scipy.interpolate import CubicSpline, PchipInterpolator
     except ImportError:
-        raise ImportError("Error: scipy is required for spline interpolation.", file=sys.stderr)
+        raise ImportError("Error: scipy is required for spline interpolation.")
 
     spline = CubicSpline(X, Y, bc_type='natural')
     pchip = PchipInterpolator(X, Y)
@@ -48,11 +48,19 @@ def _monotone_natural_spline(Xout, X, Y):
     Qstep = 1./(len(X)-1) # step between quantiles
     infirst = (Xout >= X[0]) & (Xout < X[1])
     x = (Xout[infirst] - X[0])/(X[1]-X[0]) # normalized variable ranges from 0 to 1
-    Yout[infirst] = Y[0] + Qstep * x**(Yp[1]*(X[1]-X[0])/Qstep)
+    if Yp[1] > 0:
+        Yout[infirst] = Y[0] + Qstep * x**(Yp[1]*(X[1]-X[0])/Qstep)
+    else:
+        # A nonpositive natural-spline slope gives a divergent/flat power law.
+        # Retain the monotone PCHIP fallback in this wing instead.
+        Yout[infirst] = pchip(Xout[infirst])
     
     inlast = (Xout > X[-2]) & (Xout <= X[-1])
     x = (Xout[inlast] - X[-2])/(X[-1] - X[-2])
-    Yout[inlast] = Y[-1] - Qstep * (1-x) ** (Yp[-2]*(X[-1]-X[-2])/Qstep)
+    if Yp[-2] > 0:
+        Yout[inlast] = Y[-1] - Qstep * (1-x) ** (Yp[-2]*(X[-1]-X[-2])/Qstep)
+    else:
+        Yout[inlast] = pchip(Xout[inlast])
                
     return Yout
     

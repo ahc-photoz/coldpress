@@ -527,6 +527,15 @@ def check_logic(args):
     process_fits_table(args.input, args.output, required_cols, drop_cols, history, check_callback)
     
 # --- Main Entry Point and Parser Configuration ---
+def test_logic(args):
+    from .validation import run_tests
+    try:
+        run_tests(args)
+    except (ValueError, OSError, ImportError) as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     """Main entry point for the coldpress command-line interface.
 
@@ -629,6 +638,23 @@ def main():
     parser_plot.add_argument('--units', type=str, nargs='?', default='redshift', choices=['redshift','zeta'], help='Specifies the representation for the PDF\'s independent axis: "redshift" (z) or "zeta" (ln(1+z)) (default: redshift).')
     parser_plot.set_defaults(func=plot_logic)
     
+    # --- Parser for the "test" command ---
+    parser_test = subparsers.add_parser('test', help='Validate PDFs against spectroscopic redshifts.')
+    parser_test.add_argument('input', help='Input FITS catalog (table in HDU 1).')
+    parser_test.add_argument('--zspec', required=True, help='Spectroscopic redshift column (z, not zeta).')
+    parser_test.add_argument('--encoded', default=DEFAULT_ENCODED_COL, help='Cold-pressed PDF column.')
+    parser_test.add_argument('--mag', help='Magnitude column; split into occupied [m, m+1) intervals.')
+    parser_test.add_argument('--tests', '--test', nargs='+', type=str.lower,
+                             choices=['all', 'qqplot', 'pit', 'outlier-rate'], default=['all'])
+    parser_test.add_argument('--outdir', default='.', help='Diagnostic output directory.')
+    parser_test.add_argument('--format', choices=['png', 'pdf', 'svg'], default='png')
+    parser_test.add_argument('--bins', type=int, default=10, help='Number of PIT/odds bins (default: 10).')
+    parser_test.add_argument('--estimator', choices=['mode', 'mean', 'median'], default='mode')
+    parser_test.add_argument('--odds-window', type=float, default=DEFAULT_ODDS_WINDOW)
+    parser_test.add_argument('--nmin', type=int, default=1,
+                             help='Minimum valid sources per magnitude bin (default: 1).')
+    parser_test.set_defaults(func=test_logic)
+
     # --- Parser for the "check" command ---
     parser_check = subparsers.add_parser('check', help='Check the PDFs for issues and flag them.')
     parser_check.add_argument('input', type=str, help='Name of input FITS catalog.')
@@ -674,6 +700,16 @@ def main():
     if args.command == 'measure':
         if not args.input or not args.output:
             parser_measure.error("the following arguments are required: input, output")
+
+    if args.command == 'test':
+        if args.bins < 1:
+            parser_test.error('--bins must be positive.')
+        if args.nmin < 1:
+            parser_test.error('--nmin must be positive.')
+        for name in ('odds_window',):
+            value = getattr(args, name)
+            if not np.isfinite(value) or value <= 0:
+                parser_test.error('--' + name.replace('_', '-') + ' must be finite and positive.')
 
     args.func(args)
 

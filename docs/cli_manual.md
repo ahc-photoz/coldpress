@@ -8,7 +8,7 @@ The `coldpress` command-line interface provides tools for the compression, analy
 * **HDU Targeting:** In a standard FITS file, Header Data Unit 0 (HDU 0) contains the primary header and optional image arrays, while the binary table is typically stored in HDU 1. Currently, all commands except `info` strictly assume the target table is in HDU 1 and will fail otherwise. Global `--hdu` argument support is planned for future releases.
 
 ## Global Usage
-`coldpress [-h] [-v] {info,encode,decode,combine,measure,plot,check} ...`
+`coldpress [-h] [-v] {info,encode,decode,combine,measure,plot,check,test} ...`
 
 ---
 
@@ -143,7 +143,7 @@ PDFs compressed with ColdPress store a sequence of redshifts corresponding to sp
 ---
 
 ## `combine`
-The `combine` command (new in version 1.2.0) performs mathematical operations on two coldpress-encoded PDFs, returning a single compressed PDF or a calculated correlation p-value.
+The `combine` command performs mathematical operations on two coldpress-encoded PDFs, returning a single compressed PDF or a calculated correlation p-value.
 
 **Operations:**
 
@@ -235,6 +235,63 @@ The `--quantities` argument accepts any scalar column in the FITS table to overp
 * `--method {steps,spline,all}`: PDF reconstruction method for visualization (default: `all`).
 * `--quantities QUANTITIES ...`: FITS columns to overplot as vertical markers.
 * `--units [{redshift,zeta}]`: Axis representation (default: `redshift`).
+
+---
+
+## `test` (new in v1.3.0)
+The test mode validates coldpress-encoded PDFs statistically against known spectroscopic redshifts and saves diagnostic plots. The spectroscopic redshift column must be specified with `--zspec`. This command reads the input catalog without modifying it and does not produce an output FITS table.
+
+The cumulative distribution function (CDF) is reconstructed using monotone spline interpolation between quantiles, with power-law treatment of the PDF wings where appropriate. Both PIT values and odds are evaluated from this reconstructed CDF. Spectroscopic redshifts outside the PDF support are retained with PIT values of 0 or 1.
+
+**Available Diagnostics (`--tests`):**
+
+* **PIT (`pit`):** Plots the distribution of probability integral transform values, defined as PIT = CDF(zspec). The histogram is normalized to probability density. Calibrated PDFs should produce a uniform distribution, shown by a horizontal dashed line at 1.
+* **Q–Q Plot (`qqplot`):** Compares the sorted PIT values with the quantiles of a uniform distribution. Calibrated PDFs should follow the diagonal dashed line. 
+* **Outlier Rate versus Odds (`outlier-rate`):** Groups sources into equal-width odds bins and plots the outlier fraction η against the mean odds in each bin. Error bars show 68% confidence intervals in the outlier rate obtained with the Wilson formula for binomial distributions. Only odds bins containing at least four sources are plotted; this minimum is applied separately within each magnitude group. The last odds bin includes odds = 1.
+
+**Odds and Outlier Definition:**
+The point estimate zphot is the PDF mode by default; `--estimator` also accepts `mean` or `median`. Odds represent the integrated probability within zphot ± `ODDS_WINDOW * (1+zphot)`. A source is an outlier when its spectroscopic redshift lies outside this same interval:
+
+`|zphot - zspec| / (1 + zphot) > ODDS_WINDOW`
+
+The default `ODDS_WINDOW` is 0.03. Because the outlier criterion and odds integral use identical bounds, calibrated PDFs should follow η = 1 − ⟨odds⟩, shown as a diagonal dashed line. 
+
+**Magnitude Binning:**
+Without `--mag`, all valid sources are evaluated together. With `--mag COL`, sources are split into integer-aligned one-magnitude intervals: 16 ≤ mag < 17, 17 ≤ mag < 18, etc. All qualifying intervals are plotted on the same axes, using consistent colors across diagnostics and a legend showing the source count in each interval.
+
+The `--nmin` argument excludes magnitude intervals containing fewer than the specified number of valid sources. Counts are determined after invalid rows and PDFs have been removed. Empty intervals are omitted; if no magnitude intervals meet `--nmin`, the command exits with an error and generates no plots. This argument has no effect without `--mag`.
+
+> **Important:** `--nmin` applies to the total population of each magnitude interval. The minimum of four sources per odds bin is a separate requirement that applies only to the outlier-rate plot.
+
+**Input Filtering and Output:**
+Masked or on-finite spectroscopic redshifts are excluded. Masked or non-finite magnitudes are also excluded when `--mag` is used. Missing or invalid PDFs are skipped, and the command reports the number of excluded sources. 
+
+One file is saved per selected diagnostic. Without magnitude binning, filenames are `pit_all.png`, `qqplot_all.png`, and `outlier-rate_all.png`. With `--mag`, the suffix is `_by_mag` instead of `_all`. The extension follows `--format`. Existing files with the same names are overwritten. These are graphical diagnostics; the command does not report hypothesis-test p-values or a pass/fail verdict.
+
+### Usage
+`coldpress test [-h] --zspec COL [--encoded COL] [--mag COL] [--tests TEST [TEST ...]] [--outdir OUTDIR] [--format {png,pdf,svg}] [--bins BINS] [--estimator {mode,mean,median}] [--odds-window ODDS_WINDOW] [--nmin NMIN] input`
+
+### Positional Arguments
+
+* `input`: Input FITS table containing cold-pressed PDFs and spectroscopic redshifts.
+
+### Required Named Arguments
+
+* `--zspec COL`: Column containing scalar spectroscopic redshifts in units of redshift z, not ζ = ln(1+z).
+
+### Optional Arguments
+
+* `--encoded COL`: Column containing cold-pressed PDFs (default: `COLDPRESS_PDF`).
+* `--mag COL`: Scalar magnitude column used to split sources into one-magnitude intervals. 
+* `--tests TEST ...`, `--test TEST ...`: Diagnostics to generate: `pit`, `qqplot`, `outlier-rate`, or `all` (default: `all`). Multiple diagnostics can be selected.
+* `--outdir OUTDIR`: Directory for saved plots (default: `.`).
+* `--format {png,pdf,svg}`: Output plot format (default: `png`).
+* `--bins BINS`: Number of equal-width bins for the PIT histogram and odds grouping. Must be a positive integer (default: 10).
+* `--estimator {mode,mean,median}`: PDF point estimate used to center the odds window and classify outliers (default: `mode`).
+* `--odds-window ODDS_WINDOW`: Half-width of the odds window as a fraction of 1 + zphot, also defining the outlier threshold. Must be finite and positive (default: 0.03).
+* `--nmin NMIN`: Minimum number of valid sources required per magnitude interval. Must be a positive integer (default: 1).
+
+> **Tip:** To generate all diagnostics by magnitude, retaining intervals with at least 50 valid sources, use `coldpress test catalog.fits --zspec Z_SPEC --mag MAG_I --nmin 50 --outdir diagnostics`. To select only PIT and Q–Q plots, add `--tests pit qqplot`.
 
 ---
 

@@ -23,7 +23,7 @@ Citation:
 
 __author__ = "Antonio Hernán Caballero"
 __email__ = "antoniohernancaballero@gmail.com"
-__version__ = "1.2.1"
+__version__ = "1.3.0"
 __license__ = "LGPLv3"
 __copyright__ = "Copyright 2026, Antonio Hernán Caballero"
 

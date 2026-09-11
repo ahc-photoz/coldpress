@@ -193,6 +193,14 @@ coldpress decode hsc_sample_encoded.fits hsc_sample_decoded.fits --density PDF_H
 > [!WARNING]
 > If a decoded PDF has non-zero probability outside the grid range you specify, `coldpress` will raise a truncation error and abort. Use the `--force-range` flag to explicitly force and permit truncation.
 
+## Advanced ColdPress modes
+
+The ``combine`` mode performs mathematical operations (cross-correlation, average, or conflation) on two coldpress-encoded PDFs. 
+
+The ``test mode`` (new in v.1.3.0) validates coldpress-encoded PDFs statistically against known spectroscopic redshifts.
+
+Further information about these execution modes can be found in the **[ColdPress CLI User Manual](docs/cli_manual.md)**.
+
 ## Contributing
 
 We welcome all contributions and greatly appreciate your help. To get started, please see the guidelines below:

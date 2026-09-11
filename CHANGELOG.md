@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.0] - 2026-09-12
+
+## Added
+
+- New `test` mode validates coldpressed PDFs against spectroscopic redshifts. 
+Tests available: PIT, QQplot, outlier rate vs odds.
+
 ## [1.2.1] - 2026-07-12
 
 ## Added
